@@ -6,6 +6,7 @@ readme = "README.md"
 license = "MIT"
 authors = [
     {name = "Richard Atkinson", email = "richardatk01@gmail.com"},
+    {name = "bcforbd"},
 ]
 keywords = ["telegram", "bot", "claude", "ai", "development", "remote", "coding"]
 classifiers = [
@@ -23,9 +24,9 @@ requires-python = ">=3.11"
 dynamic = ["dependencies"]
 
 [project.urls]
-Homepage = "https://github.com/richardatkinson/claude-code-telegram"
-Repository = "https://github.com/richardatkinson/claude-code-telegram"
-Documentation = "https://github.com/richardatkinson/claude-code-telegram/blob/main/docs/"
+Homepage = "https://github.com/bcforbd/claude-code-telegram"
+Repository = "https://github.com/bcforbd/claude-code-telegram"
+Documentation = "https://github.com/bcforbd/claude-code-telegram/blob/main/docs/"
 
 [project.scripts]
 claude-telegram-bot = "src.main:run"

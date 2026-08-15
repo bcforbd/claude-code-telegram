@@ -134,6 +134,8 @@ data/
 *.db-journal
 *.log
 .DS_Store
+logs/
+.research/
 
 # IDE
 .vscode/
@@ -147,3 +149,4 @@ sessions/
 backups/
 uploads/
 config/mcp.json
+uv.lock

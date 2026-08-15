@@ -1,375 +1,333 @@
 # Claude Code Telegram Bot
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
+[![CI](https://github.com/bcforbd/claude-code-telegram/actions/workflows/ci.yml/badge.svg)](https://github.com/bcforbd/claude-code-telegram/actions/workflows/ci.yml)
+[![Release](https://github.com/bcforbd/claude-code-telegram/actions/workflows/release.yml/badge.svg)](https://github.com/bcforbd/claude-code-telegram/actions/workflows/release.yml)
+[![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-A Telegram bot that gives you remote access to [Claude Code](https://claude.ai/code). Chat naturally with Claude about your projects from anywhere -- no terminal commands needed.
+**Drive Claude Code, Claude Desktop, and Claude Cowork from Telegram — securely, from anywhere.**
 
-## What is this?
+A self-hosted Telegram bot that gives you a terminal-like interface to the Claude agent
+engine. Send a message, get a reply. Upload files, review diffs, approve tool calls,
+and manage long-running sessions — all from your phone.
 
-This bot connects Telegram to Claude Code, providing a conversational AI interface for your codebase:
+> **Fork notice:** This is a maintained fork of the original
+> [claude-code-telegram](https://github.com/RichardAtCT/claude-code-telegram) project by
+> Richard Atkinson, extended with backend modes (Desktop/Cowork), remote approvals,
+> insight & control commands, and more. See [License & Attribution](#license--attribution).
 
-- **Chat naturally** -- ask Claude to analyze, edit, or explain your code in plain language
-- **Maintain context** across conversations with automatic session persistence per project
-- **Code on the go** from any device with Telegram
-- **Receive proactive notifications** from webhooks, scheduled jobs, and CI/CD events
-- **Stay secure** with built-in authentication, directory sandboxing, and audit logging
+---
 
-## Quick Start
+## Table of Contents
 
-### Demo
+- [Features](#features)
+- [Backends](#backends)
+- [Commands](#commands)
+- [Quick Start](#quick-start)
+- [Configuration](#configuration)
+- [Security](#security)
+- [Deployment](#deployment)
+- [Development](#development)
+- [Project Structure](#project-structure)
+- [Documentation](#documentation)
+- [License & Attribution](#license--attribution)
 
-```
-You: Can you help me add error handling to src/api.py?
-
-Bot: I'll analyze src/api.py and add error handling...
-     [Claude reads your code, suggests improvements, and can apply changes directly]
-
-You: Looks good. Now run the tests to make sure nothing broke.
-
-Bot: Running pytest...
-     All 47 tests passed. The error handling changes are working correctly.
-```
-
-### 1. Prerequisites
-
-- **Python 3.11+** -- [Download here](https://www.python.org/downloads/)
-- **Claude Code CLI** -- [Install from here](https://claude.ai/code)
-- **Telegram Bot Token** -- Get one from [@BotFather](https://t.me/botfather)
-
-### 2. Install
-
-Choose your preferred method:
-
-#### Option A: Install from a release tag (Recommended)
-
-```bash
-# Using uv (recommended — installs in an isolated environment)
-uv tool install git+https://github.com/RichardAtCT/claude-code-telegram@v1.3.0
-
-# Or using pip
-pip install git+https://github.com/RichardAtCT/claude-code-telegram@v1.3.0
-
-# Track the latest stable release
-pip install git+https://github.com/RichardAtCT/claude-code-telegram@latest
-```
-
-#### Option B: From source (for development)
-
-```bash
-git clone https://github.com/RichardAtCT/claude-code-telegram.git
-cd claude-code-telegram
-make dev  # requires Poetry
-```
-
-> **Note:** Always install from a tagged release (not `main`) for stability. See [Releases](https://github.com/RichardAtCT/claude-code-telegram/releases) for available versions.
-
-### 3. Configure
-
-```bash
-cp .env.example .env
-# Edit .env with your settings:
-```
-
-**Minimum required:**
-```bash
-TELEGRAM_BOT_TOKEN=1234567890:ABC-DEF1234ghIkl-zyx57W2v1u123ew11
-TELEGRAM_BOT_USERNAME=my_claude_bot
-APPROVED_DIRECTORY=/Users/yourname/projects
-ALLOWED_USERS=123456789  # Your Telegram user ID
-```
-
-### 4. Run
-
-```bash
-make run          # Production
-make run-debug    # With debug logging
-```
-
-Message your bot on Telegram to get started.
-
-> **Detailed setup:** See [docs/setup.md](docs/setup.md) for Claude authentication options and troubleshooting.
-
-## Modes
-
-The bot supports two interaction modes:
-
-### Agentic Mode (Default)
-
-The default conversational mode. Just talk to Claude naturally -- no special commands required.
-
-**Commands:** `/start`, `/new`, `/status`, `/verbose`, `/repo`
-If `ENABLE_PROJECT_THREADS=true`: `/sync_threads`
-
-```
-You: What files are in this project?
-Bot: Working... (3s)
-     📖 Read
-     📂 LS
-     💬 Let me describe the project structure
-Bot: [Claude describes the project structure]
-
-You: Add a retry decorator to the HTTP client
-Bot: Working... (8s)
-     📖 Read: http_client.py
-     💬 I'll add a retry decorator with exponential backoff
-     ✏️ Edit: http_client.py
-     💻 Bash: poetry run pytest tests/ -v
-Bot: [Claude shows the changes and test results]
-
-You: /verbose 0
-Bot: Verbosity set to 0 (quiet)
-```
-
-Use `/verbose 0|1|2` to control how much background activity is shown:
-
-| Level | Shows |
-|-------|-------|
-| **0** (quiet) | Final response only (typing indicator stays active) |
-| **1** (normal, default) | Tool names + reasoning snippets in real-time |
-| **2** (detailed) | Tool names with inputs + longer reasoning text |
-
-#### GitHub Workflow
-
-Claude Code already knows how to use `gh` CLI and `git`. Authenticate on your server with `gh auth login`, then work with repos conversationally:
-
-```
-You: List my repos related to monitoring
-Bot: [Claude runs gh repo list, shows results]
-
-You: Clone the uptime one
-Bot: [Claude runs gh repo clone, clones into workspace]
-
-You: /repo
-Bot: 📦 uptime-monitor/  ◀
-     📁 other-project/
-
-You: Show me the open issues
-Bot: [Claude runs gh issue list]
-
-You: Create a fix branch and push it
-Bot: [Claude creates branch, commits, pushes]
-```
-
-Use `/repo` to list cloned repos in your workspace, or `/repo <name>` to switch directories (sessions auto-resume).
-
-### Classic Mode
-
-Set `AGENTIC_MODE=false` to enable the full 13-command terminal-like interface with directory navigation, inline keyboards, quick actions, git integration, and session export.
-
-**Commands:** `/start`, `/help`, `/new`, `/continue`, `/end`, `/status`, `/cd`, `/ls`, `/pwd`, `/projects`, `/export`, `/actions`, `/git`  
-If `ENABLE_PROJECT_THREADS=true`: `/sync_threads`
-
-```
-You: /cd my-web-app
-Bot: Directory changed to my-web-app/
-
-You: /ls
-Bot: src/  tests/  package.json  README.md
-
-You: /actions
-Bot: [Run Tests] [Install Deps] [Format Code] [Run Linter]
-```
-
-## Event-Driven Automation
-
-Beyond direct chat, the bot can respond to external triggers:
-
-- **Webhooks** -- Receive GitHub events (push, PR, issues) and route them through Claude for automated summaries or code review
-- **Scheduler** -- Run recurring Claude tasks on a cron schedule (e.g., daily code health checks)
-- **Notifications** -- Deliver agent responses to configured Telegram chats
-
-Enable with `ENABLE_API_SERVER=true` and `ENABLE_SCHEDULER=true`. See [docs/setup.md](docs/setup.md) for configuration.
+---
 
 ## Features
 
-### Working Features
+### Core
 
-- Conversational agentic mode (default) with natural language interaction
-- Classic terminal-like mode with 13 commands and inline keyboards
-- Full Claude Code integration with SDK (primary) and CLI (fallback)
-- Automatic session persistence per user/project directory
-- Multi-layer authentication (whitelist + optional token-based)
-- Rate limiting with token bucket algorithm
-- Directory sandboxing with path traversal prevention
-- File upload handling with archive extraction
-- Image/screenshot upload with analysis
-- Voice message transcription (Mistral Voxtral / OpenAI Whisper / [local whisper.cpp](docs/local-whisper-cpp.md))
-- Git integration with safe repository operations
-- Quick actions system with context-aware buttons
-- Session export in Markdown, HTML, and JSON formats
-- SQLite persistence with migrations
-- Usage and cost tracking
-- Audit logging and security event tracking
-- Event bus for decoupled message routing
-- Webhook API server (GitHub HMAC-SHA256, generic Bearer token auth)
-- Job scheduler with cron expressions and persistent storage
-- Notification service with per-chat rate limiting
+- **Remote Claude sessions** — start, continue, interrupt, and end conversations from Telegram
+- **Three backend profiles** — run the engine the way Claude Code, Claude Desktop, or
+  Claude Cowork configures it (see [Backends](#backends))
+- **Remote approvals** — route Claude tool permission requests to Telegram inline
+  **Approve / Deny / Always allow** buttons; default-deny on timeout
+- **Per-chat settings** — backend, model, and permission-mode overrides that survive restarts
 
-- Tunable verbose output showing Claude's tool usage and reasoning in real-time
-- Persistent typing indicator so users always know the bot is working
-- 16 configurable tools with allowlist/disallowlist control (see [docs/tools.md](docs/tools.md))
+### Input & output
 
-### Planned Enhancements
+- **File uploads** — send files or archives (zip/tar/gz), extracted and previewed automatically
+- **Image analysis** — screenshots and photos analyzed in-context
+- **Voice messages** — transcription via Mistral Voxtral, OpenAI Whisper, or local whisper.cpp
+- **Session export** — download conversation history in multiple formats
 
-- Plugin system for third-party extensions
+### Productivity
+
+- **Git integration** — safe, read-only git operations with a command allowlist
+- **Quick actions** — context-aware action buttons for common tasks
+- **Follow-up suggestions** — smart conversation-mode prompts
+- **Project thread mode** — route work by Telegram forum topics (private chat or supergroup)
+- **Job scheduler** — schedule recurring bot/agent tasks
+- **MCP server** — expose the bot as a Model Context Protocol server
+
+### Control & observability
+
+- **Insight commands** — `/cost` (real SDK spend + budget), `/stats`, `/sessions`,
+  `/context`, `/jobs`, `/doctor`
+- **Rate limiting** — per-window request limits with burst capacity
+- **Cost caps** — hard per-request and per-user lifetime budgets
+- **Audit logging** — structured JSON logs of security-relevant events
+
+---
+
+## Backends
+
+The bot drives the Claude agent engine (via `claude-agent-sdk`) in three profiles:
+
+| Backend | Name | What it mirrors |
+|---|---|---|
+| `sdk` | Claude Code | Plain Claude Code — the original behavior |
+| `desktop` | Claude Desktop | Imports `claude_desktop_config.json` (MCP servers + env, incl. dev-mode gateway routing) |
+| `cowork` | Claude Cowork | Cowork account preferences as system prompt, `auto/claude-opus` model, `acceptEdits` permissions, web search, plugins |
+
+Select globally with `CLAUDE_BACKEND` in `.env`, or per chat with `/backend`.
+See [docs/backend-modes.md](docs/backend-modes.md) for the full design.
+
+---
+
+## Commands
+
+### Sessions
+
+| Command | Description |
+|---|---|
+| `/start` | Begin a new conversation |
+| `/new` | Start a fresh session (alias) |
+| `/continue` | Resume the active session |
+| `/end` | End the current session |
+| `/stop` | Interrupt the running request |
+| `/loop` | Toggle agentic loop mode |
+| `/compact` | Compact the conversation context |
+| `/clear` | Clear conversation state |
+
+### Files & projects
+
+| Command | Description |
+|---|---|
+| `/ls` | List files in the working directory |
+| `/cd <path>` | Change the working directory |
+| `/pwd` | Show the current working directory |
+| `/projects` | List / switch project roots |
+| `/git <cmd>` | Safe read-only git operations |
+| `/export` | Export the session in another format |
+
+### Insights & control
+
+| Command | Description |
+|---|---|
+| `/cost` | Real SDK spend and remaining budget |
+| `/stats` | Usage dashboard |
+| `/sessions` | List sessions; switch or resume inline |
+| `/context` | Inspect the current session context |
+| `/jobs` | Scheduled-job management (list / add / remove) |
+| `/doctor` | Self-diagnostics checklist |
+| `/status` | Bot status |
+
+### Backends & models
+
+| Command | Description |
+|---|---|
+| `/backend [sdk\|desktop\|cowork]` | Show or switch the engine profile |
+| `/model [name]` | Show or set the model |
+| `/permission [mode]` | Show or set the permission mode |
+| `/desktop` | Switch to the Desktop backend (shortcut) |
+| `/cowork` | Switch to the Cowork backend (shortcut) |
+
+### Configuration & management
+
+| Command | Description |
+|---|---|
+| `/config` | View or edit runtime configuration |
+| `/features` | List feature flags |
+| `/plugins` / `/skills` | Manage plugins and skills |
+| `/actions` | List available quick actions |
+| `/mcp` | Model Context Protocol status / management |
+| `/hooks` | Manage hooks |
+| `/memory` | View agent memory |
+| `/todo` | View / manage todo list |
+| `/review` | Trigger a code review |
+| `/plan` | Enter plan mode |
+| `/goal` | Goal management |
+| `/verbose` | Toggle verbose output |
+| `/repo` | Show repository info |
+| `/restart` | Restart the bot |
+| `/help` | Show help |
+
+---
+
+## Quick Start
+
+### Prerequisites
+
+- **Python 3.11+** ([download](https://www.python.org/downloads/))
+- **Poetry** (or `uv`) for dependency management
+- A **Telegram bot token** from [@BotFather](https://t.me/BotFather)
+- **Claude authentication** — one of:
+  - Claude CLI logged in (`claude auth login`) — recommended
+  - An `ANTHROPIC_API_KEY`
+
+### Install & run
+
+```bash
+git clone https://github.com/bcforbd/claude-code-telegram.git
+cd claude-code-telegram
+
+# Poetry
+poetry install --with dev
+poetry run claude-telegram-bot
+
+# or uv
+uv sync
+uv run claude-telegram-bot
+```
+
+### Configure
+
+```bash
+cp .env.example .env
+# Edit .env:
+#   TELEGRAM_BOT_TOKEN=<token from BotFather>
+#   TELEGRAM_BOT_USERNAME=<bot username>
+#   APPROVED_DIRECTORY=/path/to/your/projects
+#   ALLOWED_USERS=<your Telegram numeric user id>
+```
+
+Message your bot on Telegram: `/start` to begin, `/help` for commands.
+
+> **Windows users:** the repo includes [scripts/bot-watcher.ps1](scripts/bot-watcher.ps1),
+> an optional helper that starts the bot automatically with Claude Desktop and stops it
+> when Claude Desktop closes.
+
+---
 
 ## Configuration
 
-### Required
+All configuration is environment-variable driven (`.env`). Key settings:
 
-```bash
-TELEGRAM_BOT_TOKEN=...           # From @BotFather
-TELEGRAM_BOT_USERNAME=...        # Your bot's username
-APPROVED_DIRECTORY=...           # Base directory for project access
-ALLOWED_USERS=123456789          # Comma-separated Telegram user IDs
-```
+| Variable | Purpose |
+|---|---|
+| `TELEGRAM_BOT_TOKEN` | Bot token from @BotFather (**required**) |
+| `APPROVED_DIRECTORY` | Root path the bot may access (**required**) |
+| `ALLOWED_USERS` | Comma-separated Telegram user IDs allowed to use the bot |
+| `ENABLE_TOKEN_AUTH` | Require a per-user auth token |
+| `AUTH_TOKEN_SECRET` | Secret for generating auth tokens |
+| `USE_SDK` | Use the Claude Python SDK (`true`) or CLI subprocess (`false`) |
+| `ANTHROPIC_API_KEY` | API key (optional if Claude CLI is authenticated) |
+| `CLAUDE_BACKEND` | Default backend: `sdk`, `desktop`, or `cowork` |
+| `CLAUDE_MAX_COST_PER_USER` | Lifetime USD budget per user |
+| `CLAUDE_MAX_COST_PER_REQUEST` | Hard USD cap per request |
+| `RATE_LIMIT_REQUESTS` | Requests allowed per window |
+| `ENABLE_REMOTE_APPROVALS` | Route tool approvals to Telegram buttons |
+| `ENABLE_PROJECT_THREADS` | Forum-topic project routing |
 
-### Common Options
+See [docs/configuration.md](docs/configuration.md) for the full reference and
+[.env.example](.env.example) for every option with comments.
 
-```bash
-# Claude
-ANTHROPIC_API_KEY=sk-ant-...     # API key (optional if using CLI auth)
-CLAUDE_MAX_COST_PER_USER=10.0    # Spending limit per user (USD)
-CLAUDE_TIMEOUT_SECONDS=300       # Operation timeout
-
-# Mode
-AGENTIC_MODE=true                # Agentic (default) or classic mode
-VERBOSE_LEVEL=1                  # 0=quiet, 1=normal (default), 2=detailed
-
-# Rate Limiting
-RATE_LIMIT_REQUESTS=10           # Requests per window
-RATE_LIMIT_WINDOW=60             # Window in seconds
-
-# Features (classic mode)
-ENABLE_GIT_INTEGRATION=true
-ENABLE_FILE_UPLOADS=true
-ENABLE_QUICK_ACTIONS=true
-```
-
-### Agentic Platform
-
-```bash
-# Webhook API Server
-ENABLE_API_SERVER=false          # Enable FastAPI webhook server
-API_SERVER_PORT=8080             # Server port
-
-# Webhook Authentication
-GITHUB_WEBHOOK_SECRET=...        # GitHub HMAC-SHA256 secret
-WEBHOOK_API_SECRET=...           # Bearer token for generic providers
-
-# Scheduler
-ENABLE_SCHEDULER=false           # Enable cron job scheduler
-
-# Notifications
-NOTIFICATION_CHAT_IDS=123,456    # Default chat IDs for proactive notifications
-```
-
-### Project Threads Mode
-
-```bash
-# Enable strict topic routing by project
-ENABLE_PROJECT_THREADS=true
-
-# Mode: private (default) or group
-PROJECT_THREADS_MODE=private
-
-# YAML registry file (see config/projects.example.yaml)
-PROJECTS_CONFIG_PATH=config/projects.yaml
-
-# Required only when PROJECT_THREADS_MODE=group
-PROJECT_THREADS_CHAT_ID=-1001234567890
-
-# Minimum delay (seconds) between Telegram API calls during topic sync
-# Set 0 to disable pacing
-PROJECT_THREADS_SYNC_ACTION_INTERVAL_SECONDS=1.1
-```
-
-In strict mode, only `/start` and `/sync_threads` work outside mapped project topics.
-In private mode, `/start` auto-syncs project topics for your private bot chat.
-To use topics with your bot, enable them in BotFather:
-`Bot Settings -> Threaded mode`.
-
-> **Full reference:** See [docs/configuration.md](docs/configuration.md) and [`.env.example`](.env.example).
-
-### Finding Your Telegram User ID
-
-Message [@userinfobot](https://t.me/userinfobot) on Telegram -- it will reply with your user ID number.
-
-## Troubleshooting
-
-**Bot doesn't respond:**
-- Check your `TELEGRAM_BOT_TOKEN` is correct
-- Verify your user ID is in `ALLOWED_USERS`
-- Ensure Claude Code CLI is installed and accessible
-- Check bot logs with `make run-debug`
-
-**Claude integration not working:**
-- SDK mode (default): Check `claude auth status` or verify `ANTHROPIC_API_KEY`
-- CLI mode: Verify `claude --version` and `claude auth status`
-- Check `CLAUDE_ALLOWED_TOOLS` includes necessary tools (see [docs/tools.md](docs/tools.md) for the full reference)
-
-**High usage costs:**
-- Adjust `CLAUDE_MAX_COST_PER_USER` to set spending limits
-- Monitor usage with `/status`
-- Use shorter, more focused requests
+---
 
 ## Security
 
-This bot implements defense-in-depth security:
+The bot is designed to be exposed to the internet, so security is layered:
 
-- **Access Control** -- Whitelist-based user authentication
-- **Directory Isolation** -- Sandboxing to approved directories
-- **Rate Limiting** -- Request and cost-based limits
-- **Input Validation** -- Injection and path traversal protection
-- **Webhook Authentication** -- GitHub HMAC-SHA256 and Bearer token verification
-- **Audit Logging** -- Complete tracking of all user actions
+- **User whitelist** — only Telegram user IDs in `ALLOWED_USERS` may interact
+  (empty = allow all; **not recommended**)
+- **Token auth** — optional per-user bearer tokens via `ENABLE_TOKEN_AUTH`
+- **Path & command validation** — dangerous patterns (pipes, redirection, injection)
+  are rejected before reaching the shell
+- **Tool allowlist** — Claude tools are restricted to a curated set;
+  `CLAUDE_ALLOWED_TOOLS` overrides
+- **Rate limiting** — per-window request caps with burst control
+- **Cost caps** — per-request and per-user lifetime budgets enforced at the SDK level
+- **Remote approvals default-deny** — permission requests time out to denial
+- **Audit logging** — structured, security-relevant event log
+- **Approved root** — file access confined to `APPROVED_DIRECTORY`
 
-See [SECURITY.md](SECURITY.md) for details.
+See [SECURITY.md](SECURITY.md) for the security policy and architecture, and
+[CONTRIBUTING.md](CONTRIBUTING.md) for reporting a vulnerability.
+
+> **Self-hosting note:** the real secrets live in your local `.env`, which is
+> gitignored. Never commit `.env`, `logs/`, or `data/` (the SQLite database
+> contains conversation history).
+
+---
+
+## Deployment
+
+- **Linux / systemd:** see [SYSTEMD_SETUP.md](SYSTEMD_SETUP.md) for a persistent
+  user service (auto-restart, logs, hardening).
+- **Windows:** see `scripts/bot-watcher.ps1` for tying the bot's lifecycle to
+  Claude Desktop (or run `python -m src.main` from the project root).
+
+---
 
 ## Development
 
 ```bash
-make dev           # Install all dependencies
-make test          # Run tests with coverage
-make lint          # Black + isort + flake8 + mypy
-make format        # Auto-format code
-make run-debug     # Run with debug logging
-make run-watch     # Run with auto-restart on code changes
+# Install dev dependencies
+poetry install --with dev
+
+# Run tests (unit + integration)
+make test          # or: poetry run pytest
+
+# Lint & format checks
+make lint          # black, isort, flake8, mypy
+
+# Auto-fix formatting
+make format
+
+# Run with auto-reload on code changes
+make run-watch
 ```
 
-> **Full documentation:** See the [docs index](docs/README.md) for all guides and references.
+**Code standards:** Python 3.11+, Black formatting (88 cols), type hints required,
+pytest with >85% coverage. Pre-commit hooks are configured — `poetry run pre-commit install`.
 
-### Version Management
+CI (GitHub Actions) runs formatting, lint, tests, and secret scanning
+on every push/PR to `main`. Releases are built automatically from `v*` tags
+(see [.github/workflows](.github/workflows)).
 
-The version is defined once in `pyproject.toml` and read at runtime via `importlib.metadata`. To cut a release:
+---
 
-```bash
-make bump-patch    # 1.2.0 -> 1.2.1 (bug fixes)
-make bump-minor    # 1.2.0 -> 1.3.0 (new features)
-make bump-major    # 1.2.0 -> 2.0.0 (breaking changes)
+## Project Structure
+
+```
+src/
+├── main.py                 # Entry point
+├── api/                    # Local HTTP API
+├── bot/                    # Telegram bot core, handlers, features, middleware
+├── claude/                 # Engine integration: facade, SDK, backends, monitor
+├── config/                 # Pydantic settings, environment loading, feature flags
+├── events/                 # Event bus
+├── mcp/                    # Model Context Protocol server
+├── notifications/          # Notification service
+├── projects/               # Project registry + thread manager
+├── scheduler/              # Job scheduler
+├── security/               # Auth, validation, rate limiting, audit
+├── storage/                # SQLite persistence (facade, repositories)
+└── utils/                  # Shared helpers
 ```
 
-Each command commits, tags, and pushes automatically, triggering CI tests and a GitHub Release with auto-generated notes.
+---
 
-### Contributing
+## Documentation
 
-1. Fork the repository
-2. Create a feature branch: `git checkout -b feature/amazing-feature`
-3. Make changes with tests: `make test && make lint`
-4. Submit a Pull Request
+| Doc | Description |
+|---|---|
+| [Setup & Installation](docs/setup.md) | Prerequisites, authentication, install methods |
+| [Configuration](docs/configuration.md) | Full environment variable reference |
+| [Backend Modes](docs/backend-modes.md) | sdk / desktop / cowork profiles design |
+| [Available Tools](docs/tools.md) | Claude tool allowlist & monitor behaviour |
+| [Development](docs/development.md) | Dev setup, testing, contribution workflow |
+| [Project Overview](docs/project-overview.md) | Architecture & design decisions |
 
-**Code standards:** Python 3.11+, Black formatting (88 chars), type hints required, pytest with >85% coverage.
+---
 
-## License
+## License & Attribution
 
-MIT License -- see [LICENSE](LICENSE).
+MIT License — see [LICENSE](LICENSE).
 
-## Star History
-
-[![Star History Chart](https://api.star-history.com/svg?repos=RichardAtCT/claude-code-telegram&type=Date)](https://star-history.com/#RichardAtCT/claude-code-telegram&Date)
-
-## Acknowledgments
-
-- [Claude](https://claude.ai) by Anthropic
-- [python-telegram-bot](https://github.com/python-telegram-bot/python-telegram-bot)
+This project is a fork of [claude-code-telegram](https://github.com/RichardAtCT/claude-code-telegram)
+by Richard Atkinson (MIT). New work: backend modes (Desktop/Cowork), remote approvals,
+insight & control commands, and additional hardening. Third-party components remain
+under their respective licenses.
