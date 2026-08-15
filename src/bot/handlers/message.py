@@ -385,6 +385,7 @@ async def handle_text_message(
                 logger.warning("Failed to update progress message", error=str(e))
 
         # Run Claude command
+        claude_response = None
         try:
             claude_response = await claude_integration.run_command(
                 prompt=message_text,
@@ -587,7 +588,7 @@ async def handle_text_message(
             features.get_conversation_enhancer() if features else None
         )
 
-        if conversation_enhancer and claude_response:
+        if conversation_enhancer and claude_response is not None:
             try:
                 # Update conversation context
                 conversation_enhancer.update_context(user_id, claude_response)

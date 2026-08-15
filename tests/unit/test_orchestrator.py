@@ -83,7 +83,8 @@ def deps():
 
 
 def test_agentic_registers_6_commands(agentic_settings, deps):
-    """Agentic mode registers start, new, status, verbose, repo, restart commands."""
+    """Agentic mode registers start, new, status, verbose, repo, restart,
+    backend, desktop, cowork, model, permission, mcp commands."""
     orchestrator = MessageOrchestrator(agentic_settings, deps)
     app = MagicMock()
     app.add_handler = MagicMock()
@@ -100,17 +101,56 @@ def test_agentic_registers_6_commands(agentic_settings, deps):
     ]
     commands = [h[0][0].commands for h in cmd_handlers]
 
-    assert len(cmd_handlers) == 6
-    assert frozenset({"start"}) in commands
-    assert frozenset({"new"}) in commands
-    assert frozenset({"status"}) in commands
-    assert frozenset({"verbose"}) in commands
-    assert frozenset({"repo"}) in commands
-    assert frozenset({"restart"}) in commands
+    assert len(cmd_handlers) == 42
+    expected = {
+        "start",
+        "new",
+        "status",
+        "help",
+        "continue",
+        "end",
+        "ls",
+        "cd",
+        "pwd",
+        "projects",
+        "git",
+        "export",
+        "actions",
+        "plugins",
+        "skills",
+        "features",
+        "verbose",
+        "repo",
+        "restart",
+        "backend",
+        "desktop",
+        "cowork",
+        "model",
+        "permission",
+        "mcp",
+        "stop",
+        "cost",
+        "stats",
+        "sessions",
+        "context",
+        "jobs",
+        "doctor",
+        "goal",
+        "loop",
+        "compact",
+        "clear",
+        "review",
+        "todo",
+        "memory",
+        "hooks",
+        "config",
+        "plan",
+    }
+    assert {next(iter(c)) for c in commands} == expected
 
 
 def test_classic_registers_14_commands(classic_settings, deps):
-    """Classic mode registers all 14 commands."""
+    """Classic mode registers all 20 commands."""
     orchestrator = MessageOrchestrator(classic_settings, deps)
     app = MagicMock()
     app.add_handler = MagicMock()
@@ -125,7 +165,7 @@ def test_classic_registers_14_commands(classic_settings, deps):
         if isinstance(call[0][0], CommandHandler)
     ]
 
-    assert len(cmd_handlers) == 14
+    assert len(cmd_handlers) == 40
 
 
 def test_agentic_registers_text_document_photo_handlers(agentic_settings, deps):
@@ -151,31 +191,87 @@ def test_agentic_registers_text_document_photo_handlers(agentic_settings, deps):
 
     # 5 message handlers (text, document, photo, voice, unknown commands passthrough)
     assert len(msg_handlers) == 5
-    # 2 callback handlers (stop: + cd:)
-    assert len(cb_handlers) == 2
+    # callback handlers (stop: + approve: + cd: + backend:set: + pages/noop/cancel/mng/mcp + catch-all)
+    assert len(cb_handlers) == 11
 
 
 async def test_agentic_bot_commands(agentic_settings, deps):
-    """Agentic mode returns 6 bot commands."""
+    """Agentic mode returns 12 bot commands."""
     orchestrator = MessageOrchestrator(agentic_settings, deps)
     commands = await orchestrator.get_bot_commands()
 
-    assert len(commands) == 6
+    assert len(commands) == 42
     cmd_names = [c.command for c in commands]
-    assert cmd_names == ["start", "new", "status", "verbose", "repo", "restart"]
+    assert cmd_names == [
+        "start",
+        "new",
+        "status",
+        "help",
+        "continue",
+        "end",
+        "ls",
+        "cd",
+        "pwd",
+        "projects",
+        "git",
+        "export",
+        "actions",
+        "plugins",
+        "skills",
+        "features",
+        "verbose",
+        "repo",
+        "backend",
+        "desktop",
+        "cowork",
+        "model",
+        "permission",
+        "mcp",
+        "stop",
+        "cost",
+        "stats",
+        "sessions",
+        "context",
+        "jobs",
+        "doctor",
+        "goal",
+        "loop",
+        "compact",
+        "clear",
+        "review",
+        "todo",
+        "memory",
+        "hooks",
+        "config",
+        "plan",
+        "restart",
+    ]
 
 
 async def test_classic_bot_commands(classic_settings, deps):
-    """Classic mode returns 14 bot commands."""
+    """Classic mode returns 20 bot commands."""
     orchestrator = MessageOrchestrator(classic_settings, deps)
     commands = await orchestrator.get_bot_commands()
 
-    assert len(commands) == 14
+    assert len(commands) == 40
     cmd_names = [c.command for c in commands]
     assert "start" in cmd_names
     assert "help" in cmd_names
     assert "git" in cmd_names
     assert "restart" in cmd_names
+    assert "backend" in cmd_names
+    assert "desktop" in cmd_names
+    assert "cowork" in cmd_names
+    assert "model" in cmd_names
+    assert "permission" in cmd_names
+    assert "mcp" in cmd_names
+    assert "stop" in cmd_names
+    assert "cost" in cmd_names
+    assert "stats" in cmd_names
+    assert "sessions" in cmd_names
+    assert "context" in cmd_names
+    assert "jobs" in cmd_names
+    assert "doctor" in cmd_names
 
 
 async def test_restart_command_sends_sigterm(deps):
@@ -191,17 +287,109 @@ async def test_restart_command_sends_sigterm(deps):
     context = MagicMock()
     context.bot_data = {"audit_logger": None}
 
-    with patch("src.bot.handlers.command.os.kill") as mock_kill:
+    with (
+        patch("src.bot.handlers.command.os.kill") as mock_kill,
+        patch("src.bot.handlers.command._spawn_restart_process") as mock_spawn,
+    ):
         await restart_command(update, context)
 
     import os
     import signal
 
     mock_kill.assert_called_once_with(os.getpid(), signal.SIGTERM)
+    # On Windows a detached replacement process is spawned before exit.
+    if os.name == "nt":
+        mock_spawn.assert_called_once_with()
     # Verify confirmation message was sent
     update.message.reply_text.assert_called_once()
     msg = update.message.reply_text.call_args[0][0]
     assert "Restarting" in msg
+
+
+def test_build_restart_command_appends_delay(monkeypatch):
+    """_build_restart_command reproduces argv with --delay-start appended."""
+    import sys
+
+    from src.bot.handlers.command import _build_restart_command
+
+    monkeypatch.setattr(
+        sys, "orig_argv", [sys.executable, "-m", "src.main"], raising=False
+    )
+    cmd = _build_restart_command()
+    assert cmd == [sys.executable, "-m", "src.main", "--delay-start", "4"]
+
+
+def test_build_restart_command_keeps_existing_delay(monkeypatch):
+    """_build_restart_command does not duplicate --delay-start."""
+    import sys
+
+    from src.bot.handlers.command import _build_restart_command
+
+    monkeypatch.setattr(
+        sys,
+        "orig_argv",
+        [sys.executable, "-m", "src.main", "--delay-start", "7"],
+        raising=False,
+    )
+    cmd = _build_restart_command()
+    assert cmd == [sys.executable, "-m", "src.main", "--delay-start", "7"]
+
+
+def test_build_restart_command_resolves_venv_interpreter(tmp_path, monkeypatch):
+    """_build_restart_command swaps a shim/base interpreter for the venv python."""
+    import sys
+
+    from src.bot.handlers.command import _build_restart_command
+
+    fake_base = tmp_path / "base" / "python.exe"
+    for rel, name in (("Scripts", "python.exe"), ("bin", "python")):
+        d = tmp_path / ".venv" / rel
+        d.mkdir(parents=True, exist_ok=True)
+        (d / name).write_text("")
+    venv_py = tmp_path / ".venv" / "Scripts" / "python.exe"
+    monkeypatch.setattr(sys, "executable", str(fake_base))
+    monkeypatch.setattr(sys, "prefix", str(tmp_path / ".venv"))
+    monkeypatch.setattr(
+        sys, "orig_argv", [str(fake_base), "-m", "src.main"], raising=False
+    )
+    cmd = _build_restart_command()
+    assert cmd[0] == str(venv_py)
+    assert cmd[1:] == ["-m", "src.main", "--delay-start", "4"]
+
+
+def test_spawn_restart_process_uses_logs_and_cwd(tmp_path, monkeypatch):
+    """_spawn_restart_process spawns detached with log redirection."""
+    import os
+    import subprocess
+    import sys
+
+    from src.bot.handlers.command import _spawn_restart_process
+
+    old_cwd = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        monkeypatch.setattr(
+            sys, "orig_argv", [sys.executable, "-m", "src.main"], raising=False
+        )
+        calls = {}
+
+        def fake_popen(cmd, **kwargs):
+            calls["cmd"] = cmd
+            calls["kwargs"] = kwargs
+            return MagicMock()
+
+        monkeypatch.setattr(subprocess, "Popen", fake_popen)
+        _spawn_restart_process()
+    finally:
+        os.chdir(old_cwd)
+
+    assert calls["cmd"][-2:] == ["--delay-start", "4"]
+    assert calls["kwargs"]["cwd"] == str(tmp_path)
+    assert calls["kwargs"]["stdin"] == subprocess.DEVNULL
+    # Log files created under logs/ and passed as stdout/stderr
+    assert (tmp_path / "logs" / "bot.out.log").exists()
+    assert calls["kwargs"]["stdout"].name.endswith("bot.out.log")
+    assert calls["kwargs"]["stderr"].name.endswith("bot.err.log")
 
 
 async def test_agentic_start_no_keyboard(agentic_settings, deps):
@@ -338,7 +526,7 @@ async def test_agentic_callback_scoped_to_cd_pattern(agentic_settings, deps):
         if isinstance(call[0][0], CallbackQueryHandler)
     ]
 
-    assert len(cb_handlers) == 2
+    assert len(cb_handlers) == 11
     # Find the cd: handler by pattern
     cd_handler = [h for h in cb_handlers if h.pattern and h.pattern.match("cd:x")]
     assert len(cd_handler) == 1
@@ -346,6 +534,11 @@ async def test_agentic_callback_scoped_to_cd_pattern(agentic_settings, deps):
     # Also has a stop: handler
     stop_handler = [h for h in cb_handlers if h.pattern and h.pattern.match("stop:1")]
     assert len(stop_handler) == 1
+    # And an approve: handler for remote approvals
+    approve_handler = [
+        h for h in cb_handlers if h.pattern and h.pattern.match("approve:abc:allow")
+    ]
+    assert len(approve_handler) == 1
 
 
 async def test_agentic_document_rejects_large_files(agentic_settings, deps):

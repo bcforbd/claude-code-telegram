@@ -32,6 +32,26 @@ def _patch_parse_message():
         yield
 
 
+@pytest.fixture(autouse=True)
+def _isolate_anthropic_env():
+    """Strip Anthropic env vars so tests stay hermetic.
+
+    The gateway/shell that launches pytest may carry ANTHROPIC_API_KEY (and
+    friends) in its environment; without isolation, Settings picks those up
+    and "unset" tests fail.
+    """
+    keys = ["ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "CLAUDE_MODEL", "CLAUDE_MODELS"]
+    saved = {k: __import__("os").environ.get(k) for k in keys}
+    for k in keys:
+        __import__("os").environ.pop(k, None)
+    yield
+    for k, v in saved.items():
+        if v is None:
+            __import__("os").environ.pop(k, None)
+        else:
+            __import__("os").environ[k] = v
+
+
 def _make_assistant_message(text="Test response"):
     """Create an AssistantMessage with proper structure for current SDK version."""
     return AssistantMessage(
@@ -101,6 +121,7 @@ class TestClaudeSDKManager:
             approved_directory=tmp_path,
             claude_timeout_seconds=2,  # Short timeout for testing
             enable_mcp=False,
+            _env_file=None,  # hermetic: ignore project .env
         )
 
     @pytest.fixture
@@ -488,6 +509,7 @@ class TestClaudeSandboxSettings:
             claude_timeout_seconds=2,
             sandbox_enabled=True,
             sandbox_excluded_commands=["git", "npm"],
+            _env_file=None,  # hermetic: ignore project .env
         )
 
     @pytest.fixture
@@ -759,6 +781,7 @@ class TestClaudeSandboxSettings:
             telegram_bot_username="testbot",
             approved_directory=tmp_path,
             claude_timeout_seconds=2,
+            _env_file=None,  # hermetic: ignore project .env
         )
         manager = ClaudeSDKManager(config)
 

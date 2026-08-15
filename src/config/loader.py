@@ -207,7 +207,7 @@ def create_test_config(**overrides: Any) -> Settings:
     test_dir = Path(test_values["approved_directory"])
     test_dir.mkdir(parents=True, exist_ok=True)
 
-    # Create settings with test values
-    settings = Settings(**test_values)
+    # Create settings with test values (no .env/env leakage -> hermetic tests)
+    settings = Settings(**test_values, _env_file=None)
 
     return settings

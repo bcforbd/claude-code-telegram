@@ -318,16 +318,52 @@ class MessageOrchestrator:
 
     def _register_agentic_handlers(self, app: Application) -> None:
         """Register agentic handlers: commands + text/file/photo."""
-        from .handlers import command
+        from .handlers import capabilities, command, insights, manage
 
         # Commands
         handlers = [
             ("start", self.agentic_start),
             ("new", self.agentic_new),
             ("status", self.agentic_status),
+            ("help", command.help_command),
+            ("continue", command.continue_session),
+            ("end", command.end_session),
+            ("ls", command.list_files),
+            ("cd", command.change_directory),
+            ("pwd", command.print_working_directory),
+            ("projects", command.show_projects),
+            ("git", command.git_command),
+            ("export", command.export_session),
+            ("actions", command.quick_actions),
+            ("plugins", manage.plugins_manage),
+            ("skills", manage.skills_manage),
+            ("features", capabilities.features_command),
             ("verbose", self.agentic_verbose),
             ("repo", self.agentic_repo),
             ("restart", command.restart_command),
+            ("backend", self.agentic_backend),
+            ("desktop", self.agentic_desktop),
+            ("cowork", self.agentic_cowork),
+            ("model", self.agentic_model),
+            ("permission", self.agentic_permission),
+            ("mcp", manage.mcp_manage),
+            ("stop", insights.stop_command),
+            ("cost", insights.cost_command),
+            ("stats", insights.stats_command),
+            ("sessions", insights.sessions_command),
+            ("context", insights.context_command),
+            ("jobs", insights.jobs_command),
+            ("doctor", insights.doctor_command),
+            ("goal", manage.goal_command),
+            ("loop", manage.loop_command),
+            ("compact", manage.compact_command),
+            ("clear", manage.clear_command),
+            ("review", manage.review_command),
+            ("todo", manage.todo_command),
+            ("memory", manage.memory_command),
+            ("hooks", manage.hooks_command),
+            ("config", manage.config_command),
+            ("plan", manage.plan_command),
         ]
         if self.settings.enable_project_threads:
             handlers.append(("sync_threads", command.sync_threads))
@@ -388,6 +424,16 @@ class MessageOrchestrator:
             )
         )
 
+        # Remote approval buttons (approve:<request>:<decision>)
+        from .handlers.approval import approval_callback_handler
+
+        app.add_handler(
+            CallbackQueryHandler(
+                self._inject_deps(approval_callback_handler),
+                pattern=r"^approve:",
+            )
+        )
+
         # Only cd: callbacks (for project selection), scoped by pattern
         app.add_handler(
             CallbackQueryHandler(
@@ -396,11 +442,72 @@ class MessageOrchestrator:
             )
         )
 
+        # Backend selection buttons (backend:set:<name>)
+        app.add_handler(
+            CallbackQueryHandler(
+                self._inject_deps(self._handle_backend_callback),
+                pattern=r"^backend:set:",
+            )
+        )
+
+        # Pagination buttons (cap:page:<kind>:<page>[:keyword])
+        app.add_handler(
+            CallbackQueryHandler(
+                self._inject_deps(self._handle_page_callback),
+                pattern=r"^cap:page:",
+            )
+        )
+        # Page indicator / disabled buttons (cap:noop)
+        app.add_handler(
+            CallbackQueryHandler(
+                self._inject_deps(self._handle_noop_callback),
+                pattern=r"^cap:noop$",
+            )
+        )
+
+        # Cancel buttons (cancel:<context>)
+        app.add_handler(
+            CallbackQueryHandler(
+                self._inject_deps(self._handle_cancel_callback),
+                pattern=r"^cancel:",
+            )
+        )
+        # Management confirmations (mng:confirm:<op>:<payload>)
+        from .handlers import manage as manage_handlers
+
+        app.add_handler(
+            CallbackQueryHandler(
+                self._inject_deps(manage_handlers.mcp_confirm_remove),
+                pattern=r"^mng:confirm:mcp_remove:",
+            )
+        )
+        app.add_handler(
+            CallbackQueryHandler(
+                self._inject_deps(manage_handlers.mng_confirm),
+                pattern=r"^mng:confirm:",
+            )
+        )
+        # MCP management buttons (mng:mcp:<action>:<name>)
+        app.add_handler(
+            CallbackQueryHandler(
+                self._inject_deps(manage_handlers.mcp_button_callback),
+                pattern=r"^mng:mcp:",
+            )
+        )
+
+        # Generic callback router (quick actions, cd:, action:, confirm:,
+        # followup:, conversation:, git:, export:, sess:) — same as classic.
+        from .handlers import callback
+
+        app.add_handler(
+            CallbackQueryHandler(self._inject_deps(callback.handle_callback_query))
+        )
+
         logger.info("Agentic handlers registered")
 
     def _register_classic_handlers(self, app: Application) -> None:
         """Register full classic handler set (moved from core.py)."""
-        from .handlers import callback, command, message
+        from .handlers import callback, capabilities, command, insights, manage, message
 
         handlers = [
             ("start", command.start_command),
@@ -416,7 +523,33 @@ class MessageOrchestrator:
             ("export", command.export_session),
             ("actions", command.quick_actions),
             ("git", command.git_command),
+            ("plugins", capabilities.plugins_command),
+            ("skills", capabilities.skills_command),
+            ("features", capabilities.features_command),
             ("restart", command.restart_command),
+            ("backend", command.backend_command),
+            ("desktop", command.desktop_command),
+            ("cowork", command.cowork_command),
+            ("model", command.model_command),
+            ("permission", command.permission_command),
+            ("mcp", manage.mcp_manage),
+            ("stop", insights.stop_command),
+            ("cost", insights.cost_command),
+            ("stats", insights.stats_command),
+            ("sessions", insights.sessions_command),
+            ("context", insights.context_command),
+            ("jobs", insights.jobs_command),
+            ("doctor", insights.doctor_command),
+            ("goal", manage.goal_command),
+            ("loop", manage.loop_command),
+            ("compact", manage.compact_command),
+            ("clear", manage.clear_command),
+            ("review", manage.review_command),
+            ("todo", manage.todo_command),
+            ("memory", manage.memory_command),
+            ("hooks", manage.hooks_command),
+            ("config", manage.config_command),
+            ("plan", manage.plan_command),
         ]
         if self.settings.enable_project_threads:
             handlers.append(("sync_threads", command.sync_threads))
@@ -445,6 +578,64 @@ class MessageOrchestrator:
             MessageHandler(filters.VOICE, self._inject_deps(message.handle_voice)),
             group=10,
         )
+
+        # Remote approval buttons first, so the catch-all never sees them.
+        from .handlers.approval import approval_callback_handler
+
+        app.add_handler(
+            CallbackQueryHandler(
+                self._inject_deps(approval_callback_handler),
+                pattern=r"^approve:",
+            )
+        )
+        app.add_handler(
+            CallbackQueryHandler(
+                self._inject_deps(self._handle_backend_callback),
+                pattern=r"^backend:set:",
+            )
+        )
+        # Pagination buttons (cap:page:<kind>:<page>[:keyword])
+        app.add_handler(
+            CallbackQueryHandler(
+                self._inject_deps(self._handle_page_callback),
+                pattern=r"^cap:page:",
+            )
+        )
+        # Page indicator / disabled buttons (cap:noop)
+        app.add_handler(
+            CallbackQueryHandler(
+                self._inject_deps(self._handle_noop_callback),
+                pattern=r"^cap:noop$",
+            )
+        )
+        # Cancel buttons (cancel:<context>)
+        app.add_handler(
+            CallbackQueryHandler(
+                self._inject_deps(self._handle_cancel_callback),
+                pattern=r"^cancel:",
+            )
+        )
+        # MCP management buttons (mng:mcp:<action>:<name>)
+        app.add_handler(
+            CallbackQueryHandler(
+                self._inject_deps(manage.mcp_button_callback),
+                pattern=r"^mng:mcp:",
+            )
+        )
+        # MCP remove confirmation (specific before generic mng:confirm)
+        app.add_handler(
+            CallbackQueryHandler(
+                self._inject_deps(manage.mcp_confirm_remove),
+                pattern=r"^mng:confirm:mcp_remove:",
+            )
+        )
+        # Management confirmations (mng:confirm:<op>:<payload>)
+        app.add_handler(
+            CallbackQueryHandler(
+                self._inject_deps(manage.mng_confirm),
+                pattern=r"^mng:confirm:",
+            )
+        )
         app.add_handler(
             CallbackQueryHandler(self._inject_deps(callback.handle_callback_query))
         )
@@ -458,8 +649,44 @@ class MessageOrchestrator:
                 BotCommand("start", "Start the bot"),
                 BotCommand("new", "Start a fresh session"),
                 BotCommand("status", "Show session status"),
+                BotCommand("help", "Show available commands"),
+                BotCommand("continue", "Explicitly continue last session"),
+                BotCommand("end", "End current session and clear context"),
+                BotCommand("ls", "List files in current directory"),
+                BotCommand("cd", "Change directory (resumes project session)"),
+                BotCommand("pwd", "Show current directory"),
+                BotCommand("projects", "Show all projects"),
+                BotCommand("git", "Git repository commands"),
+                BotCommand("export", "Export current session"),
+                BotCommand("actions", "Show quick actions"),
+                BotCommand("plugins", "List configured Claude plugins"),
+                BotCommand("skills", "List available Claude skills"),
+                BotCommand("features", "Show enabled feature toggles"),
                 BotCommand("verbose", "Set output verbosity (0/1/2)"),
                 BotCommand("repo", "List repos / switch workspace"),
+                BotCommand("backend", "Show/switch backend (sdk/desktop/cowork)"),
+                BotCommand("desktop", "Claude Desktop config status"),
+                BotCommand("cowork", "Claude Cowork profile status"),
+                BotCommand("model", "Show/set model override"),
+                BotCommand("permission", "Show/set permission mode"),
+                BotCommand("mcp", "List active MCP servers"),
+                BotCommand("stop", "Interrupt the running request"),
+                BotCommand("cost", "Show real spend and budget"),
+                BotCommand("stats", "Show usage dashboard"),
+                BotCommand("sessions", "List / switch sessions"),
+                BotCommand("context", "Inspect current session"),
+                BotCommand("jobs", "Manage scheduled jobs"),
+                BotCommand("doctor", "Run diagnostics"),
+                BotCommand("goal", "Set a session goal"),
+                BotCommand("loop", "Auto-continue the session"),
+                BotCommand("compact", "Summarize + restart fresh"),
+                BotCommand("clear", "Clear session context"),
+                BotCommand("review", "Review current git diff"),
+                BotCommand("todo", "Session todo list"),
+                BotCommand("memory", "Show Claude memory (CLAUDE.md)"),
+                BotCommand("hooks", "List configured hooks"),
+                BotCommand("config", "Show effective config"),
+                BotCommand("plan", "Toggle plan permission mode"),
                 BotCommand("restart", "Restart the bot"),
             ]
             if self.settings.enable_project_threads:
@@ -479,7 +706,33 @@ class MessageOrchestrator:
                 BotCommand("status", "Show session status"),
                 BotCommand("export", "Export current session"),
                 BotCommand("actions", "Show quick actions"),
+                BotCommand("plugins", "List/manage Claude plugins"),
+                BotCommand("skills", "List/manage Claude skills"),
+                BotCommand("features", "Show enabled feature toggles"),
                 BotCommand("git", "Git repository commands"),
+                BotCommand("backend", "Show/switch backend (sdk/desktop/cowork)"),
+                BotCommand("desktop", "Claude Desktop config status"),
+                BotCommand("cowork", "Claude Cowork profile status"),
+                BotCommand("model", "Show/set model override"),
+                BotCommand("permission", "Show/set permission mode"),
+                BotCommand("mcp", "List/manage MCP servers"),
+                BotCommand("stop", "Interrupt the running request"),
+                BotCommand("cost", "Show real spend and budget"),
+                BotCommand("stats", "Show usage dashboard"),
+                BotCommand("sessions", "List / switch sessions"),
+                BotCommand("context", "Inspect current session"),
+                BotCommand("jobs", "Manage scheduled jobs"),
+                BotCommand("doctor", "Run diagnostics"),
+                BotCommand("goal", "Set a session goal"),
+                BotCommand("loop", "Auto-continue the session"),
+                BotCommand("compact", "Summarize + restart fresh"),
+                BotCommand("clear", "Clear session context"),
+                BotCommand("review", "Review current git diff"),
+                BotCommand("todo", "Session todo list"),
+                BotCommand("memory", "Show Claude memory (CLAUDE.md)"),
+                BotCommand("hooks", "List configured hooks"),
+                BotCommand("config", "Show effective config"),
+                BotCommand("plan", "Toggle plan permission mode"),
                 BotCommand("restart", "Restart the bot"),
             ]
             if self.settings.enable_project_threads:
@@ -622,6 +875,290 @@ class MessageOrchestrator:
             parse_mode="HTML",
         )
 
+    # ------------------------------------------------------------------
+    # Backend / desktop / cowork / model / permission / mcp commands
+    # ------------------------------------------------------------------
+
+    def _backend_run_params(self, context: ContextTypes.DEFAULT_TYPE) -> Dict[str, Any]:
+        """Per-chat backend/model/permission overrides from user_data."""
+        return {
+            "backend": context.user_data.get("backend"),
+            "model": context.user_data.get("model_override"),
+            "permission_mode": context.user_data.get("permission_mode"),
+        }
+
+    def _enter_approval_chat(
+        self, context: ContextTypes.DEFAULT_TYPE, chat_id: int
+    ) -> Any:
+        """Bind the approval bridge to a chat for the current execution.
+
+        Returns a contextvar token (or None when approvals are disabled) to
+        pass to :meth:`_exit_approval_chat`.
+        """
+        bridge = context.bot_data.get("approval_bridge")
+        if bridge is None:
+            return None
+        return bridge.push_chat(chat_id)
+
+    def _exit_approval_chat(
+        self, context: ContextTypes.DEFAULT_TYPE, token: Any
+    ) -> None:
+        """Leave the approval chat context bound by _enter_approval_chat."""
+        if token is None:
+            return
+        bridge = context.bot_data.get("approval_bridge")
+        if bridge is not None:
+            bridge.pop_chat(token)
+
+    def _require_integration(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Return the ClaudeIntegration facade or None."""
+        return context.bot_data.get("claude_integration")
+
+    async def agentic_backend(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Show/set backend: /backend [sdk|desktop|cowork]."""
+        claude_integration = context.bot_data.get("claude_integration")
+        if not claude_integration:
+            await update.message.reply_text("Claude integration not available.")
+            return
+
+        args = update.message.text.split()[1:] if update.message.text else []
+        if not args:
+            current = context.user_data.get("backend") or (
+                claude_integration.router.select().name
+            )
+            keyboard = [
+                [
+                    InlineKeyboardButton(
+                        ("✅ " if name == current else "")
+                        + claude_integration.backend_display(name),
+                        callback_data=f"backend:set:{name}",
+                    )
+                ]
+                for name in claude_integration.router.available_backends()
+            ]
+            keyboard.append(
+                [InlineKeyboardButton("❌ Cancel", callback_data="cancel:backend")]
+            )
+            await update.message.reply_text(
+                f"🧠 Backend: <b>{claude_integration.backend_display(current)}</b>\n\n"
+                "Tap a button to switch (session resets):",
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+            )
+            return
+
+        name = args[0].strip().lower()
+        if name not in claude_integration.router.available_backends():
+            await update.message.reply_text(
+                f"❌ Unknown backend <code>{name}</code>. "
+                f"Available: {', '.join(claude_integration.router.available_backends())}",
+                parse_mode="HTML",
+            )
+            return
+
+        context.user_data["backend"] = name
+        # Backend switch implies a fresh Claude session
+        context.user_data["claude_session_id"] = None
+        context.user_data["force_new_session"] = True
+        await update.message.reply_text(
+            f"🧠 Backend switched to <b>{claude_integration.backend_display(name)}</b>.\n"
+            "Session reset — your next message starts fresh.",
+            parse_mode="HTML",
+        )
+
+    async def _backend_status_reply(
+        self,
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE,
+        backend_name: str,
+        header: str,
+    ) -> None:
+        """Format a backend status snapshot as a compact reply."""
+        claude_integration = context.bot_data.get("claude_integration")
+        if not claude_integration:
+            await update.message.reply_text("Claude integration not available.")
+            return
+        statuses = await claude_integration.get_backend_status()
+        status = statuses.get("backends", {}).get(backend_name, {})
+        active = statuses.get("active_default")
+        active_here = context.user_data.get("backend") or active
+
+        lines = [header]
+        if not status:
+            lines.append("Backend not registered.")
+            await update.message.reply_text("\n".join(lines), parse_mode="HTML")
+            return
+
+        ok = status.get("ok")
+        lines.append("Status: " + ("✅ configured" if ok else "⚠️ not configured"))
+        lines.append(
+            "Active here: "
+            + ("✅" if active_here == backend_name else "—")
+            + f" <code>{backend_name}</code>"
+        )
+
+        if backend_name == "desktop":
+            path = status.get("config_path")
+            lines.append(f"Config: <code>{path}</code>" if path else "Config: —")
+            servers = status.get("mcp_servers") or []
+            lines.append(
+                "MCP servers: "
+                + (", ".join(f"<code>{s}</code>" for s in servers) or "—")
+            )
+            gateway = status.get("gateway_base_url")
+            lines.append(
+                "Gateway: " + (f"<code>{gateway}</code>" if gateway else "default")
+            )
+            lines.append(
+                f"Dev-mode env: {'✅' if status.get('developer_mode_env') else '—'}"
+            )
+        elif backend_name == "cowork":
+            lines.append(f"Model: <code>{status.get('model')}</code>")
+            lines.append(f"Permission: <code>{status.get('permission_mode')}</code>")
+            lines.append(f"Web search: {'✅' if status.get('web_search') else '—'}")
+            plugins = status.get("plugin_dirs") or []
+            lines.append(
+                "Plugins: " + (", ".join(f"<code>{p}</code>" for p in plugins) or "—")
+            )
+            prefs = status.get("preferences_loaded")
+            lines.append(f"Preferences loaded: {'✅' if prefs else '—'}")
+
+        await update.message.reply_text("\n".join(lines), parse_mode="HTML")
+
+    async def agentic_desktop(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Claude Desktop config status: /desktop."""
+        await self._backend_status_reply(
+            update,
+            context,
+            "desktop",
+            "🖥️ <b>Claude Desktop</b> (developer-mode mirror)",
+        )
+
+    async def agentic_cowork(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Claude Cowork profile status: /cowork."""
+        await self._backend_status_reply(
+            update, context, "cowork", "🤝 <b>Claude Cowork</b> profile"
+        )
+
+    async def agentic_model(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Show/set per-chat model override: /model [name|reset]."""
+        args = update.message.text.split()[1:] if update.message.text else []
+        if not args:
+            current = context.user_data.get("model_override")
+            await update.message.reply_text(
+                "🧠 Model override: "
+                + (f"<code>{current}</code>" if current else "none (default)")
+                + "\n\nUsage: <code>/model claude-sonnet-4-5</code> · "
+                "<code>/model reset</code> to clear",
+                parse_mode="HTML",
+            )
+            return
+        if args[0].strip().lower() in ("reset", "none", "-", "default"):
+            context.user_data.pop("model_override", None)
+            await update.message.reply_text(
+                "Model override cleared — using the default model."
+            )
+            return
+        context.user_data["model_override"] = args[0].strip()
+        await update.message.reply_text(
+            f"Model override set to <b>{args[0].strip()}</b>", parse_mode="HTML"
+        )
+
+    async def agentic_permission(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Show/set permission mode: /permission [mode|reset]."""
+        valid = {"acceptEdits", "plan", "bypassPermissions", "dontAsk", "manual"}
+        args = update.message.text.split()[1:] if update.message.text else []
+        if not args:
+            current = context.user_data.get("permission_mode")
+            await update.message.reply_text(
+                "🔐 Permission mode: "
+                + (f"<code>{current}</code>" if current else "default")
+                + "\n\nModes: "
+                + ", ".join(f"<code>{m}</code>" for m in sorted(valid))
+                + "\n<code>/permission reset</code> to clear",
+                parse_mode="HTML",
+            )
+            return
+        value = args[0].strip().lower()
+        if value in ("reset", "none", "-", "default"):
+            context.user_data.pop("permission_mode", None)
+            await update.message.reply_text(
+                "Permission mode cleared — using the backend default."
+            )
+            return
+        canonical = {mode.lower(): mode for mode in valid}
+        mode = canonical.get(value)
+        if mode is None:
+            await update.message.reply_text(
+                f"❌ Unknown mode <code>{args[0].strip()}</code>. Valid: "
+                + ", ".join(sorted(valid)),
+                parse_mode="HTML",
+            )
+            return
+        context.user_data["permission_mode"] = mode
+        await update.message.reply_text(
+            f"Permission mode set to <b>{mode}</b>", parse_mode="HTML"
+        )
+
+    async def agentic_mcp(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """List active MCP servers for the current backend: /mcp."""
+        claude_integration = context.bot_data.get("claude_integration")
+        if not claude_integration:
+            await update.message.reply_text("Claude integration not available.")
+            return
+        active_name = context.user_data.get("backend") or (
+            claude_integration.router.select().name
+        )
+        backend = claude_integration.backends.get(active_name)
+        servers: List[str] = []
+        try:
+            if backend is not None and hasattr(backend, "mcp_servers"):
+                servers = sorted(backend.mcp_servers().keys())
+            elif self.settings.enable_mcp and self.settings.mcp_config_path:
+                import json as _json
+
+                try:
+                    with open(self.settings.mcp_config_path) as f:
+                        servers = sorted((_json.load(f).get("mcpServers") or {}).keys())
+                except (OSError, ValueError):
+                    servers = []
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug("MCP listing failed", error=str(exc))
+            servers = []
+
+        lines = [
+            f"🔌 MCP servers for <b>{claude_integration.backend_display(active_name)}</b>:"
+        ]
+        if servers:
+            lines.append("\n".join(f"• <code>{s}</code>" for s in servers))
+        else:
+            lines.append("None configured.")
+        from .handlers.capabilities import collect_mcp_servers
+
+        extra = collect_mcp_servers(self.settings)
+        if extra:
+            for label, extra_servers in extra:
+                lines.append(f"\n🧩 <b>{escape_html(label)}</b>:")
+                lines.append("\n".join(f"• <code>{s}</code>" for s in extra_servers))
+        else:
+            lines.append(
+                "\n💡 No MCP servers found. Set <code>CLAUDE_CONFIG_DIR</code> "
+                "or <code>ENABLE_MCP=true</code> + <code>MCP_CONFIG_PATH</code>."
+            )
+        await update.message.reply_text("\n".join(lines), parse_mode="HTML")
+
     def _format_verbose_progress(
         self,
         activity_log: List[Dict[str, Any]],
@@ -724,6 +1261,7 @@ class MessageOrchestrator:
         approved_directory: Optional[Path] = None,
         draft_streamer: Optional[DraftStreamer] = None,
         interrupt_event: Optional[asyncio.Event] = None,
+        mcp_deliveries: Optional[List[Dict[str, Any]]] = None,
     ) -> Optional[Callable[[StreamUpdate], Any]]:
         """Create a stream callback for verbose progress updates.
 
@@ -735,11 +1273,16 @@ class MessageOrchestrator:
         text are streamed to the user in real time via
         ``sendMessageDraft``.
 
+        When *mcp_deliveries* is provided, ``send_document_to_user`` and
+        ``notify_user`` tool calls are collected for later delivery.
+
         Returns None when verbose_level is 0 **and** no MCP image
         collection or draft streaming is requested.
         Typing indicators are handled by a separate heartbeat task.
         """
-        need_mcp_intercept = mcp_images is not None and approved_directory is not None
+        need_mcp_intercept = (
+            mcp_images is not None and approved_directory is not None
+        ) or mcp_deliveries is not None
 
         if verbose_level == 0 and not need_mcp_intercept and draft_streamer is None:
             return None
@@ -757,10 +1300,10 @@ class MessageOrchestrator:
             if update_obj.tool_calls and need_mcp_intercept:
                 for tc in update_obj.tool_calls:
                     tc_name = tc.get("name", "")
+                    tc_input = tc.get("input", {})
                     if tc_name == "send_image_to_user" or tc_name.endswith(
                         "__send_image_to_user"
                     ):
-                        tc_input = tc.get("input", {})
                         file_path = tc_input.get("file_path", "")
                         caption = tc_input.get("caption", "")
                         img = validate_image_path(
@@ -768,6 +1311,26 @@ class MessageOrchestrator:
                         )
                         if img:
                             mcp_images.append(img)
+                    elif mcp_deliveries is not None:
+                        if tc_name == "send_document_to_user" or tc_name.endswith(
+                            "__send_document_to_user"
+                        ):
+                            mcp_deliveries.append(
+                                {
+                                    "kind": "document",
+                                    "file_path": tc_input.get("file_path", ""),
+                                    "caption": tc_input.get("caption", ""),
+                                }
+                            )
+                        elif tc_name == "notify_user" or tc_name.endswith(
+                            "__notify_user"
+                        ):
+                            mcp_deliveries.append(
+                                {
+                                    "kind": "notify",
+                                    "message": tc_input.get("message", ""),
+                                }
+                            )
 
             # Capture tool calls
             if update_obj.tool_calls:
@@ -822,6 +1385,30 @@ class MessageOrchestrator:
                         pass
 
         return _on_stream
+
+    async def _deliver_mcp_messages(
+        self,
+        update: Update,
+        deliveries: List[Dict[str, Any]],
+    ) -> None:
+        """Deliver MCP-requested documents and notifications to the user."""
+        for item in deliveries:
+            kind = item.get("kind")
+            try:
+                if kind == "document":
+                    path = Path(item.get("file_path", ""))
+                    if path.is_file():
+                        await update.message.reply_document(
+                            document=str(path),
+                            filename=path.name,
+                            caption=item.get("caption") or None,
+                        )
+                    else:
+                        logger.warning("MCP document missing", path=str(path))
+                elif kind == "notify":
+                    await update.message.reply_text(item.get("message", ""))
+            except Exception as exc:
+                logger.warning("MCP delivery failed", kind=kind, error=str(exc))
 
     async def _send_images(
         self,
@@ -919,6 +1506,16 @@ class MessageOrchestrator:
         user_id = update.effective_user.id
         message_text = update.message.text
 
+        # Route MCP OAuth redirect URLs to a pending login (paste-back flow)
+        if message_text and (
+            message_text.startswith(("http://localhost", "http://127.0.0.1"))
+            or "code=" in message_text
+        ):
+            from .handlers.manage import mcp_finish_login
+
+            if await mcp_finish_login(update, context, message_text):
+                return
+
         logger.info(
             "Agentic text message",
             user_id=user_id,
@@ -977,6 +1574,7 @@ class MessageOrchestrator:
         tool_log: List[Dict[str, Any]] = []
         start_time = time.time()
         mcp_images: List[ImageAttachment] = []
+        mcp_deliveries: List[Dict[str, Any]] = []
 
         # Stream drafts (private chats only)
         draft_streamer: Optional[DraftStreamer] = None
@@ -999,21 +1597,29 @@ class MessageOrchestrator:
             approved_directory=self.settings.approved_directory,
             draft_streamer=draft_streamer,
             interrupt_event=interrupt_event,
+            mcp_deliveries=mcp_deliveries,
         )
 
         # Independent typing heartbeat — stays alive even with no stream events
         heartbeat = self._start_typing_heartbeat(chat)
 
+        approval_token = self._enter_approval_chat(context, chat.id)
         success = True
         try:
+            # Inject the active /goal as a prompt prefix
+            goal = context.user_data.get("goal")
+            effective_prompt = message_text
+            if goal:
+                effective_prompt = f"[Session goal] {goal}\n\n{message_text}"
             claude_response = await claude_integration.run_command(
-                prompt=message_text,
+                prompt=effective_prompt,
                 working_directory=current_dir,
                 user_id=user_id,
                 session_id=session_id,
                 on_stream=on_stream,
                 force_new=force_new,
                 interrupt_event=interrupt_event,
+                **self._backend_run_params(context),
             )
 
             # New session created successfully — clear the one-shot flag
@@ -1068,6 +1674,7 @@ class MessageOrchestrator:
         finally:
             heartbeat.cancel()
             self._active_requests.pop(user_id, None)
+            self._exit_approval_chat(context, approval_token)
             if draft_streamer:
                 try:
                     await draft_streamer.flush()
@@ -1081,6 +1688,10 @@ class MessageOrchestrator:
 
         # Use MCP-collected images (from send_image_to_user tool calls)
         images: List[ImageAttachment] = mcp_images
+
+        # Deliver MCP-requested documents / notifications
+        if mcp_deliveries:
+            await self._deliver_mcp_messages(update, mcp_deliveries)
 
         # Try to combine text + images in one message when possible
         caption_sent = False
@@ -1158,6 +1769,9 @@ class MessageOrchestrator:
                 args=[message_text[:100]],
                 success=success,
             )
+
+        # /loop auto-continue
+        await self._maybe_loop(context)
 
     async def agentic_document(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
@@ -1246,6 +1860,7 @@ class MessageOrchestrator:
         verbose_level = self._get_verbose_level(context)
         tool_log: List[Dict[str, Any]] = []
         mcp_images_doc: List[ImageAttachment] = []
+        mcp_deliveries_doc: List[Dict[str, Any]] = []
         on_stream = self._make_stream_callback(
             verbose_level,
             progress_msg,
@@ -1253,9 +1868,11 @@ class MessageOrchestrator:
             time.time(),
             mcp_images=mcp_images_doc,
             approved_directory=self.settings.approved_directory,
+            mcp_deliveries=mcp_deliveries_doc,
         )
 
         heartbeat = self._start_typing_heartbeat(chat)
+        approval_token = self._enter_approval_chat(context, chat.id)
         try:
             claude_response = await claude_integration.run_command(
                 prompt=prompt,
@@ -1264,6 +1881,7 @@ class MessageOrchestrator:
                 session_id=session_id,
                 on_stream=on_stream,
                 force_new=force_new,
+                **self._backend_run_params(context),
             )
 
             if force_new:
@@ -1291,6 +1909,10 @@ class MessageOrchestrator:
 
             # Use MCP-collected images (from send_image_to_user tool calls)
             images: List[ImageAttachment] = mcp_images_doc
+
+            # Deliver MCP-requested documents / notifications
+            if mcp_deliveries_doc:
+                await self._deliver_mcp_messages(update, mcp_deliveries_doc)
 
             caption_sent = False
             if images and len(formatted_messages) == 1:
@@ -1337,6 +1959,7 @@ class MessageOrchestrator:
             logger.error("Claude file processing failed", error=str(e), user_id=user_id)
         finally:
             heartbeat.cancel()
+            self._exit_approval_chat(context, approval_token)
 
     async def agentic_photo(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
@@ -1455,6 +2078,7 @@ class MessageOrchestrator:
         verbose_level = self._get_verbose_level(context)
         tool_log: List[Dict[str, Any]] = []
         mcp_images_media: List[ImageAttachment] = []
+        mcp_deliveries_media: List[Dict[str, Any]] = []
         on_stream = self._make_stream_callback(
             verbose_level,
             progress_msg,
@@ -1462,9 +2086,11 @@ class MessageOrchestrator:
             time.time(),
             mcp_images=mcp_images_media,
             approved_directory=self.settings.approved_directory,
+            mcp_deliveries=mcp_deliveries_media,
         )
 
         heartbeat = self._start_typing_heartbeat(chat)
+        approval_token = self._enter_approval_chat(context, chat.id)
         try:
             claude_response = await claude_integration.run_command(
                 prompt=prompt,
@@ -1474,9 +2100,11 @@ class MessageOrchestrator:
                 on_stream=on_stream,
                 force_new=force_new,
                 images=images,
+                **self._backend_run_params(context),
             )
         finally:
             heartbeat.cancel()
+            self._exit_approval_chat(context, approval_token)
 
         if force_new:
             context.user_data["force_new_session"] = False
@@ -1501,6 +2129,10 @@ class MessageOrchestrator:
 
         # Use MCP-collected images (from send_image_to_user tool calls).
         images: List[ImageAttachment] = mcp_images_media
+
+        # Deliver MCP-requested documents / notifications
+        if mcp_deliveries_media:
+            await self._deliver_mcp_messages(update, mcp_deliveries_media)
 
         caption_sent = False
         if images and len(formatted_messages) == 1:
@@ -1670,6 +2302,19 @@ class MessageOrchestrator:
             reply_markup=reply_markup,
         )
 
+    async def interrupt_user(self, user_id: int) -> bool:
+        """Interrupt the user's active request if one is running.
+
+        Used by both the inline Stop button and the /stop command.
+        Returns True if a request was interrupted.
+        """
+        active = self._active_requests.get(user_id)
+        if active is None or active.interrupted:
+            return False
+        active.interrupt_event.set()
+        active.interrupted = True
+        return True
+
     async def _handle_stop_callback(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
@@ -1685,21 +2330,199 @@ class MessageOrchestrator:
             return
 
         active = self._active_requests.get(target_user_id)
-        if not active:
+        if active is None:
             await query.answer("Already completed.", show_alert=False)
             return
         if active.interrupted:
             await query.answer("Already stopping...", show_alert=False)
             return
 
-        active.interrupt_event.set()
-        active.interrupted = True
+        await self.interrupt_user(target_user_id)
         await query.answer("Stopping...", show_alert=False)
 
         try:
-            await active.progress_msg.edit_text("Stopping...", reply_markup=None)
+            if active.progress_msg is not None:
+                await active.progress_msg.edit_text("Stopping...", reply_markup=None)
         except Exception:
             pass
+
+    async def _handle_backend_callback(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Handle backend:set:<name> callbacks — switch backend from buttons."""
+        query = update.callback_query
+        await query.answer()
+        data = query.data or ""
+        parts = data.split(":", 2)
+        if len(parts) != 3 or parts[1] != "set":
+            return
+        name = parts[2].strip().lower()
+        claude_integration = context.bot_data.get("claude_integration")
+        if not claude_integration:
+            await query.edit_message_text("Claude integration not available.")
+            return
+        if name not in claude_integration.router.available_backends():
+            await query.edit_message_text(
+                f"❌ Unknown backend <code>{escape_html(name)}</code>.",
+                parse_mode="HTML",
+            )
+            return
+        context.user_data["backend"] = name
+        context.user_data["claude_session_id"] = None
+        context.user_data["force_new_session"] = True
+        await query.edit_message_text(
+            f"🧠 Backend switched to <b>{claude_integration.backend_display(name)}</b>.\n"
+            "Session reset — your next message starts fresh.",
+            parse_mode="HTML",
+        )
+        audit_logger = context.bot_data.get("audit_logger")
+        if audit_logger:
+            await audit_logger.log_command(
+                user_id=query.from_user.id,
+                command="backend",
+                args=[name],
+                success=True,
+            )
+
+    async def _handle_page_callback(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Handle cap:page:<kind>:<page>[:keyword] — paginated list navigation."""
+        from .handlers.capabilities import (
+            _page_keyboard,
+            render_plugins_pages,
+            render_skills_pages,
+        )
+
+        query = update.callback_query
+        parts = (query.data or "").split(":")
+        kind = parts[2] if len(parts) > 2 else ""
+        try:
+            page = int(parts[3])
+        except (IndexError, ValueError):
+            page = 0
+        keyword = ":".join(parts[4:])
+        settings: Settings = context.bot_data["settings"]
+        try:
+            if kind == "skills":
+                text, total = render_skills_pages(
+                    settings,
+                    keyword,
+                    page,
+                    context.user_data.get("current_directory"),
+                )
+                kb_keyword = keyword
+            elif kind == "plugins":
+                text, total = render_plugins_pages(settings, page)
+                kb_keyword = ""
+            else:
+                await query.answer("Unknown page")
+                return
+            keyboard = _page_keyboard(kind, page, total, kb_keyword)
+            await query.edit_message_text(
+                text,
+                parse_mode="HTML",
+                reply_markup=keyboard,
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug("Page callback failed", error=str(exc))
+        await query.answer()
+
+    async def _handle_noop_callback(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Acknowledge disabled page-indicator buttons (cap:noop)."""
+        await update.callback_query.answer()
+
+    async def _handle_cancel_callback(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Handle cancel:<context> — dismiss the inline keyboard."""
+        query = update.callback_query
+        await query.answer()
+        data = query.data or ""
+        try:
+            if data.startswith("cancel:mng"):
+                await query.edit_message_text("❌ Cancelled.", reply_markup=None)
+            else:
+                await query.edit_message_reply_markup(reply_markup=None)
+        except Exception:  # pragma: no cover - message may be gone
+            pass
+
+    async def _maybe_loop(self, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Schedule the next auto-continue turn if /loop is active."""
+        remaining = context.user_data.get("loop_remaining")
+        if not remaining or remaining <= 0:
+            return
+        context.user_data["loop_remaining"] = remaining - 1
+        if remaining - 1 <= 0:
+            context.user_data.pop("loop_remaining", None)
+            return
+        job_queue = context.job_queue
+        if job_queue is None:  # pragma: no cover - tests without job queue
+            return
+        job_queue.run_once(
+            self._loop_continue,
+            when=0.5,
+            chat_id=getattr(context, "chat_id", None),
+            user_id=getattr(context, "user_id", None),
+            name=f"loop:{getattr(context, 'chat_id', None)}",
+        )
+
+    async def _loop_continue(
+        self, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:  # pragma: no cover - exercised via jobs in live bot
+        """Run one 'continue' turn for an active /loop."""
+        remaining = context.user_data.get("loop_remaining")
+        if not remaining or remaining <= 0:
+            return
+        chat_id = getattr(context, "chat_id", None)
+        try:
+            integration = context.bot_data.get("claude_integration")
+            settings: Settings = context.bot_data["settings"]
+            if not integration:
+                return
+            await context.bot.send_chat_action(chat_id=chat_id, action="typing")
+            current_dir = context.user_data.get(
+                "current_directory", settings.approved_directory
+            )
+            resp = await integration.run_command(
+                prompt="continue",
+                working_directory=current_dir,
+                user_id=getattr(context, "user_id", 0),
+                session_id=context.user_data.get("claude_session_id"),
+                interrupt_event=asyncio.Event(),
+            )
+            context.user_data["claude_session_id"] = resp.session_id
+            content = (resp.content or "").strip()
+            if content:
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text=content[:3900],
+                    disable_web_page_preview=True,
+                )
+            context.user_data["loop_remaining"] = remaining - 1
+            if remaining - 1 > 0:
+                context.job_queue.run_once(
+                    self._loop_continue,
+                    when=1.0,
+                    chat_id=chat_id,
+                    user_id=getattr(context, "user_id", 0),
+                    name=f"loop:{chat_id}",
+                )
+            else:
+                context.user_data.pop("loop_remaining", None)
+                await context.bot.send_message(
+                    chat_id=chat_id, text="🔁 Loop finished."
+                )
+        except Exception as exc:
+            context.user_data.pop("loop_remaining", None)
+            try:
+                await context.bot.send_message(
+                    chat_id=chat_id, text=f"⚠️ Loop stopped: {exc}"
+                )
+            except Exception:  # pragma: no cover
+                pass
 
     async def _agentic_callback(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE

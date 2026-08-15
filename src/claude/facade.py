@@ -10,6 +10,12 @@ from typing import Any, Callable, Dict, List, Optional
 import structlog
 
 from ..config.settings import Settings
+from .backend import (
+    BACKEND_DISPLAY,
+    BackendRouter,
+    ClaudeBackend,
+    SdkBackend,
+)
 from .sdk_integration import ClaudeResponse, ClaudeSDKManager, StreamUpdate
 from .session import SessionManager
 
@@ -24,11 +30,29 @@ class ClaudeIntegration:
         config: Settings,
         sdk_manager: Optional[ClaudeSDKManager] = None,
         session_manager: Optional[SessionManager] = None,
+        backends: Optional[Dict[str, ClaudeBackend]] = None,
+        router: Optional[BackendRouter] = None,
     ):
-        """Initialize Claude integration facade."""
+        """Initialize Claude integration facade.
+
+        ``backends`` maps backend names to ClaudeBackend instances; when
+        omitted, the default set (sdk / desktop / cowork) is built on top of
+        the shared SDK manager.
+        """
         self.config = config
         self.sdk_manager = sdk_manager or ClaudeSDKManager(config)
         self.session_manager = session_manager
+        if backends is None:
+            from .cowork_integration import CoworkManager
+            from .desktop_integration import ClaudeDesktopManager
+
+            backends = {
+                "sdk": SdkBackend(config, self.sdk_manager),
+                "desktop": ClaudeDesktopManager(config, self.sdk_manager),
+                "cowork": CoworkManager(config, self.sdk_manager),
+            }
+        self.backends = backends
+        self.router = router or BackendRouter(config, backends)
 
     async def run_command(
         self,
@@ -40,6 +64,9 @@ class ClaudeIntegration:
         force_new: bool = False,
         interrupt_event: Optional["asyncio.Event"] = None,
         images: Optional[List[Dict[str, str]]] = None,
+        backend: Optional[str] = None,
+        model: Optional[str] = None,
+        permission_mode: Optional[str] = None,
     ) -> ClaudeResponse:
         """Run Claude Code command with full integration."""
         logger.info(
@@ -49,6 +76,7 @@ class ClaudeIntegration:
             session_id=session_id,
             prompt_length=len(prompt),
             force_new=force_new,
+            backend=backend or self.router.select().name,
         )
 
         # If no session_id provided, try to find an existing session for this
@@ -90,6 +118,9 @@ class ClaudeIntegration:
                     stream_callback=on_stream,
                     interrupt_event=interrupt_event,
                     images=images,
+                    backend=backend,
+                    model=model,
+                    permission_mode=permission_mode,
                 )
             except Exception as resume_error:
                 # If resume failed (e.g., session expired/missing on Claude's side),
@@ -116,6 +147,9 @@ class ClaudeIntegration:
                         stream_callback=on_stream,
                         interrupt_event=interrupt_event,
                         images=images,
+                        backend=backend,
+                        model=model,
+                        permission_mode=permission_mode,
                     )
                 else:
                     raise
@@ -161,9 +195,14 @@ class ClaudeIntegration:
         stream_callback: Optional[Callable] = None,
         interrupt_event: Optional[asyncio.Event] = None,
         images: Optional[List[Dict[str, str]]] = None,
+        backend: Optional[str] = None,
+        model: Optional[str] = None,
+        permission_mode: Optional[str] = None,
     ) -> ClaudeResponse:
-        """Execute command via SDK."""
-        return await self.sdk_manager.execute_command(
+        """Execute command via the router-selected backend."""
+        active = self.router.select(backend)
+        logger.info("Executing via backend", backend=active.name)
+        return await active.execute_command(
             prompt=prompt,
             working_directory=working_directory,
             session_id=session_id,
@@ -171,7 +210,26 @@ class ClaudeIntegration:
             stream_callback=stream_callback,
             interrupt_event=interrupt_event,
             images=images,
+            model=model,
+            permission_mode=permission_mode,
         )
+
+    async def get_backend_status(self) -> Dict[str, Any]:
+        """Status of every backend plus the active default."""
+        statuses = await self.router.status()
+        return {
+            "active_default": self.router.select().name,
+            "available": self.router.available_backends(),
+            "backends": statuses,
+        }
+
+    def get_active_backend_name(self, chat_override: Optional[str] = None) -> str:
+        """Name of the backend that would run for the given chat override."""
+        return self.router.select(chat_override).name
+
+    def backend_display(self, name: str) -> str:
+        """Human-readable backend label."""
+        return BACKEND_DISPLAY.get(name, name)
 
     async def _find_resumable_session(
         self,

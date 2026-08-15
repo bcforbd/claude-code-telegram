@@ -341,7 +341,9 @@ class TestAuditLogger:
         )
 
         events = await storage.get_events()
-        low_risk_event = events[0]  # Most recent
+        # Match by value: events may share a timestamp on coarse-resolution clocks,
+        # so ordering is not guaranteed.
+        low_risk_event = next(e for e in events if e.details.get("command") == "echo")
         assert low_risk_event.risk_level == "low"
 
     async def test_log_file_access(self, audit_logger, storage):
@@ -379,7 +381,11 @@ class TestAuditLogger:
         )
 
         events = await storage.get_events()
-        low_risk_event = events[0]  # Most recent
+        # Match by value: events may share a timestamp on coarse-resolution clocks,
+        # so ordering is not guaranteed.
+        low_risk_event = next(
+            e for e in events if e.details.get("file_path") == "/projects/readme.txt"
+        )
         assert low_risk_event.risk_level == "low"
 
     async def test_log_security_violation(self, audit_logger, storage):

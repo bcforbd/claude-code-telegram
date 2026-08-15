@@ -698,3 +698,34 @@ def test_configuration_error_handling():
                 "APPROVED_DIRECTORY",
             ]:
                 os.environ.pop(key, None)
+
+
+def test_settings_anthropic_base_url_normalized(monkeypatch, tmp_path):
+    """ANTHROPIC_BASE_URL is normalized (trailing slash stripped)."""
+    from src.config.settings import Settings
+
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123:test")
+    monkeypatch.setenv("TELEGRAM_BOT_USERNAME", "test_bot")
+    monkeypatch.setenv("APPROVED_DIRECTORY", str(tmp_path))
+    monkeypatch.setenv("ANTHROPIC_BASE_URL", "http://proxy.example:20128/")
+    settings = Settings()
+    assert settings.anthropic_base_url == "http://proxy.example:20128"
+
+
+def test_settings_claude_models_parsed(monkeypatch, tmp_path):
+    """CLAUDE_MODELS comma list is parsed into a list."""
+    from src.config.settings import Settings
+
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123:test")
+    monkeypatch.setenv("TELEGRAM_BOT_USERNAME", "test_bot")
+    monkeypatch.setenv("APPROVED_DIRECTORY", str(tmp_path))
+    monkeypatch.setenv(
+        "CLAUDE_MODELS",
+        "fable-pro, sonnet-apc-apr-apv-oc ,opus-omni-mmf-oc",
+    )
+    settings = Settings()
+    assert settings.claude_models == [
+        "fable-pro",
+        "sonnet-apc-apr-apv-oc",
+        "opus-omni-mmf-oc",
+    ]

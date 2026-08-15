@@ -78,8 +78,23 @@ class Settings(BaseSettings):
         None,
         description="Anthropic API key for SDK (optional if CLI logged in)",
     )
+    anthropic_base_url: Optional[str] = Field(
+        None,
+        description=(
+            "Anthropic-compatible API base URL (custom gateway/proxy). "
+            "When set, ANTHROPIC_BASE_URL is exported to the Claude SDK so the "
+            "spawned CLI talks to this endpoint instead of api.anthropic.com"
+        ),
+    )
     claude_model: Optional[str] = Field(
         None, description="Claude model to use (defaults to CLI default if unset)"
+    )
+    claude_models: Optional[List[str]] = Field(
+        None,
+        description=(
+            "Known model names for the configured endpoint (comma-separated). "
+            "Shown by /model and used to validate model overrides"
+        ),
     )
     claude_max_turns: int = Field(
         DEFAULT_CLAUDE_MAX_TURNS, description="Max conversation turns"
@@ -123,6 +138,91 @@ class Settings(BaseSettings):
     claude_disallowed_tools: Optional[List[str]] = Field(
         default=[],
         description="List of explicitly disallowed Claude tools/commands",
+    )
+
+    # Backend selection: which Claude engine profile the bot drives.
+    # 'sdk'     - plain Claude Code via claude-agent-sdk (default, existing behavior)
+    # 'desktop' - mirror the Claude Desktop app: import its claude_desktop_config.json
+    #             (mcpServers + env incl. developer-mode gateway routing)
+    # 'cowork'  - mirror Claude Cowork: account conversation preferences as system
+    #             prompt, Cowork default model, acceptEdits permission mode, web search
+    claude_backend: Literal["sdk", "desktop", "cowork"] = Field(
+        "sdk",
+        description=(
+            "Default Claude backend: 'sdk' (plain Claude Code), 'desktop' "
+            "(import Claude Desktop config), or 'cowork' (Cowork profile)"
+        ),
+    )
+    desktop_config_path: Optional[Path] = Field(
+        None,
+        description=(
+            "Path to claude_desktop_config.json to import for the desktop backend. "
+            "Defaults to %APPDATA%/Claude/claude_desktop_config.json"
+        ),
+    )
+    cowork_settings_path: Optional[Path] = Field(
+        None,
+        description=(
+            "Path to Cowork account settings JSON (conversation_preferences, model). "
+            "Auto-detected from the local Claude Desktop install when unset"
+        ),
+    )
+    cowork_model: Optional[str] = Field(
+        None,
+        description=(
+            "Model used by the cowork backend (e.g. auto/claude-opus). "
+            "Falls back to the Cowork account model selector, then claude_model"
+        ),
+    )
+    cowork_permission_mode: Literal[
+        "acceptEdits", "plan", "bypassPermissions", "dontAsk", "manual"
+    ] = Field(
+        "acceptEdits",
+        description=(
+            "SDK permission mode for the cowork backend (acceptEdits ~ Cowork Auto)"
+        ),
+    )
+    cowork_enable_web_search: bool = Field(
+        True,
+        description="Add WebSearch tool in cowork backend (matches Cowork web search)",
+    )
+    cowork_plugin_dirs: Optional[List[Path]] = Field(
+        None,
+        description="Comma-separated plugin directories to load in cowork backend",
+    )
+    claude_config_dir: Optional[Path] = Field(
+        None,
+        description=(
+            "Path to the Claude Code config directory (CLAUDE_CONFIG_DIR). "
+            "Used to discover real skills, plugins, and MCP servers "
+            "(e.g. D:/AI-Dev-Data/AI-Tools/.claude)."
+        ),
+    )
+
+    # Optional per-session behavior overrides
+    default_permission_mode: Optional[
+        Literal["acceptEdits", "plan", "bypassPermissions", "dontAsk", "manual"]
+    ] = Field(
+        None,
+        description=(
+            "Optional SDK permission mode override for sdk/desktop backends "
+            "(see /permission command)"
+        ),
+    )
+
+    # Remote approvals: route SDK tool permission requests to Telegram buttons
+    enable_remote_approvals: bool = Field(
+        False,
+        description=(
+            "Route Claude tool permission requests to Telegram inline "
+            "Approve/Deny/Always buttons and wait for the user's decision"
+        ),
+    )
+    approval_timeout_seconds: int = Field(
+        120,
+        ge=10,
+        le=3600,
+        description="Seconds to wait for a remote approval decision (default deny)",
     )
 
     # Retry settings
@@ -348,6 +448,29 @@ class Settings(BaseSettings):
             return [int(uid) for uid in v]
         return v  # type: ignore[no-any-return]
 
+    @field_validator("anthropic_base_url", mode="before")
+    @classmethod
+    def normalize_anthropic_base_url(cls, v: Any) -> Optional[str]:
+        """Normalize API base URL: strip whitespace and trailing slashes."""
+        if v is None:
+            return None
+        value = str(v).strip()
+        if not value:
+            return None
+        return value.rstrip("/")
+
+    @field_validator("claude_models", mode="before")
+    @classmethod
+    def parse_claude_models(cls, v: Any) -> Optional[List[str]]:
+        """Parse comma-separated model names."""
+        if v is None:
+            return None
+        if isinstance(v, str):
+            return [m.strip() for m in v.split(",") if m.strip()]
+        if isinstance(v, list):
+            return [str(m).strip() for m in v if str(m).strip()]
+        return v  # type: ignore[no-any-return]
+
     @field_validator("claude_allowed_tools", mode="before")
     @classmethod
     def parse_claude_allowed_tools(cls, v: Any) -> Optional[List[str]]:
@@ -359,6 +482,55 @@ class Settings(BaseSettings):
         if isinstance(v, list):
             return [str(tool) for tool in v]
         return v  # type: ignore[no-any-return]
+
+    @field_validator("claude_config_dir", mode="before")
+    @classmethod
+    def normalize_claude_config_dir(cls, v: Any) -> Optional[Path]:
+        """Expand ~ and absolutize the Claude config dir; tolerate a missing dir."""
+        if not v:
+            return None
+        if isinstance(v, str):
+            v = Path(v).expanduser()
+        if not v.is_absolute():
+            v = Path.cwd() / v
+        return v  # type: ignore[no-any-return]
+
+    @field_validator("cowork_plugin_dirs", mode="before")
+    @classmethod
+    def parse_cowork_plugin_dirs(cls, v: Any) -> Optional[List[Path]]:
+        """Parse comma-separated plugin directory paths."""
+        if v is None:
+            return None
+        if isinstance(v, str):
+            return [Path(p.strip()) for p in v.split(",") if p.strip()]
+        if isinstance(v, list):
+            return [Path(str(p)) for p in v]
+        return v  # type: ignore[no-any-return]
+
+    @field_validator("claude_backend", mode="before")
+    @classmethod
+    def validate_claude_backend(cls, v: Any) -> str:
+        """Normalize backend name."""
+        if v is None:
+            return "sdk"
+        name = str(v).strip().lower()
+        if name not in {"sdk", "desktop", "cowork"}:
+            raise ValueError(
+                "claude_backend must be one of ['sdk', 'desktop', 'cowork']"
+            )
+        return name
+
+    @field_validator("default_permission_mode", "cowork_permission_mode", mode="before")
+    @classmethod
+    def validate_permission_mode(cls, v: Any) -> Any:
+        """Normalize permission mode values (None stays None)."""
+        if v is None:
+            return None
+        mode = str(v).strip()
+        valid = {"acceptEdits", "plan", "bypassPermissions", "dontAsk", "manual"}
+        if mode not in valid:
+            raise ValueError(f"permission mode must be one of {sorted(valid)}")
+        return mode
 
     @field_validator("approved_directory")
     @classmethod

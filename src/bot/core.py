@@ -40,6 +40,9 @@ class ClaudeCodeBot:
         self.is_running = False
         self.feature_registry: Optional[FeatureRegistry] = None
         self.orchestrator = MessageOrchestrator(settings, dependencies)
+        # Expose the orchestrator so classic-mode commands (e.g. /stop) can
+        # reach the active-request registry.
+        self.deps["orchestrator"] = self.orchestrator
 
     async def initialize(self) -> None:
         """Initialize bot application. Idempotent — safe to call multiple times."""
@@ -107,10 +110,33 @@ class ClaudeCodeBot:
         logger.info("Bot initialization complete")
 
     async def _set_bot_commands(self) -> None:
-        """Set bot command menu via orchestrator."""
+        """Set the command menu on every scope.
+
+        A stale/minimal scope (e.g. all_private_chats with 3 commands left by an
+        older bot version) shadows the default scope for matching chats, so we
+        push the full list everywhere the user can see it.
+        """
+        from telegram import (
+            BotCommandScopeAllChatAdministrators,
+            BotCommandScopeAllGroupChats,
+            BotCommandScopeAllPrivateChats,
+            BotCommandScopeDefault,
+        )
+
         commands = await self.orchestrator.get_bot_commands()
-        await self.app.bot.set_my_commands(commands)
-        logger.info("Bot commands set", commands=[cmd.command for cmd in commands])
+        scopes = [
+            BotCommandScopeDefault(),
+            BotCommandScopeAllPrivateChats(),
+            BotCommandScopeAllGroupChats(),
+            BotCommandScopeAllChatAdministrators(),
+        ]
+        for scope in scopes:
+            await self.app.bot.set_my_commands(commands, scope=scope)
+        logger.info(
+            "Bot commands set",
+            scopes=len(scopes),
+            commands=[cmd.command for cmd in commands],
+        )
 
     def _register_handlers(self) -> None:
         """Register handlers via orchestrator (mode-aware)."""
@@ -208,6 +234,12 @@ class ClaudeCodeBot:
             "Starting bot", mode="webhook" if self.settings.webhook_url else "polling"
         )
 
+        # Announce that the bot is up (visible after /restart)
+        try:
+            await self._announce_start()
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning("Start announcement failed", error=str(exc))
+
         try:
             self.is_running = True
 
@@ -238,6 +270,21 @@ class ClaudeCodeBot:
             raise ClaudeCodeTelegramError(f"Failed to start bot: {str(e)}") from e
         finally:
             self.is_running = False
+
+    async def _announce_start(self) -> None:
+        """Send a 'Bot started' message to the primary approved user."""
+        targets = (
+            self.settings.allowed_users or self.settings.notification_chat_ids or []
+        )
+        if not targets:
+            return
+        text = (
+            "🤖 <b>Bot started</b> ✓\n\n"
+            "Ready — send a message or <code>/help</code> for commands."
+        )
+        await self.app.bot.send_message(
+            chat_id=targets[0], text=text, parse_mode="HTML"
+        )
 
     async def stop(self) -> None:
         """Gracefully stop the bot."""

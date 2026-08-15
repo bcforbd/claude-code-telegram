@@ -235,7 +235,7 @@ class QuickActionManager:
         for i, action in enumerate(actions):
             button = InlineKeyboardButton(
                 text=f"{action.icon} {action.name}",
-                callback_data=f"quick_action:{action.id}",
+                callback_data=f"quick:{action.id}",
             )
             row.append(button)
 

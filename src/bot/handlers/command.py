@@ -2,6 +2,8 @@
 
 import os
 import signal
+import subprocess
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -159,50 +161,116 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle /help command."""
-    help_text = (
-        "🤖 <b>Claude Code Telegram Bot Help</b>\n\n"
-        "<b>Navigation Commands:</b>\n"
-        "• <code>/ls</code> - List files and directories\n"
-        "• <code>/cd &lt;directory&gt;</code> - Change to directory\n"
-        "• <code>/pwd</code> - Show current directory\n"
-        "• <code>/projects</code> - Show available projects\n\n"
-        "<b>Session Commands:</b>\n"
-        "• <code>/new</code> - Clear context and start a fresh session\n"
-        "• <code>/continue [message]</code> - Explicitly continue last session\n"
-        "• <code>/end</code> - End current session and clear context\n"
-        "• <code>/status</code> - Show session and usage status\n"
-        "• <code>/export</code> - Export session history\n"
-        "• <code>/actions</code> - Show context-aware quick actions\n"
-        "• <code>/git</code> - Git repository information\n\n"
-        "<b>Session Behavior:</b>\n"
-        "• Sessions are automatically maintained per project directory\n"
-        "• Switching directories with <code>/cd</code> resumes the session for that project\n"
-        "• Use <code>/new</code> or <code>/end</code> to explicitly clear session context\n"
-        "• Sessions persist across bot restarts\n\n"
-        "<b>Usage Examples:</b>\n"
-        "• <code>cd myproject</code> - Enter project directory\n"
-        "• <code>ls</code> - See what's in current directory\n"
-        "• <code>Create a simple Python script</code> - Ask Claude to code\n"
-        "• Send a file to have Claude review it\n\n"
-        "<b>File Operations:</b>\n"
-        "• Send text files (.py, .js, .md, etc.) for review\n"
-        "• Claude can read, modify, and create files\n"
-        "• All file operations are within your approved directory\n\n"
-        "<b>Security Features:</b>\n"
-        "• 🔒 Path traversal protection\n"
-        "• ⏱️ Rate limiting to prevent abuse\n"
-        "• 📊 Usage tracking and limits\n"
-        "• 🛡️ Input validation and sanitization\n\n"
-        "<b>Tips:</b>\n"
-        "• Use specific, clear requests for best results\n"
-        "• Check <code>/status</code> to monitor your usage\n"
-        "• Use quick action buttons when available\n"
-        "• File uploads are automatically processed by Claude\n\n"
-        "Need more help? Contact your administrator."
-    )
+    """Handle /help command — categorized, full command reference."""
+    settings: Settings = context.bot_data["settings"]
+    agentic = settings.agentic_mode
+    agentic_only = {"/repo", "/verbose"}
 
-    await update.message.reply_text(help_text, parse_mode="HTML")
+    groups = [
+        (
+            "🚀 Core",
+            [
+                ("/start", "Welcome + start a session"),
+                ("/new", "Start a fresh session (clear context)"),
+                ("/status", "Session & usage status"),
+                ("/help", "This help"),
+                ("/doctor", "Run diagnostics"),
+                ("/restart", "Restart the bot"),
+            ],
+        ),
+        (
+            "💬 Session",
+            [
+                (
+                    "/continue [message]",
+                    "Continue last session (optionally with a prompt)",
+                ),
+                ("/end", "End current session and clear context"),
+                ("/export", "Export session history"),
+                ("/context", "Inspect current session details"),
+                ("/sessions", "List / switch sessions"),
+            ],
+        ),
+        (
+            "📂 Navigation",
+            [
+                ("/ls", "List files in current directory"),
+                ("/cd &lt;path&gt;", "Change directory (resumes project session)"),
+                ("/pwd", "Show current directory"),
+                ("/projects", "Show all projects"),
+                ("/git", "Git repository commands"),
+                ("/repo", "List repos / switch workspace"),
+                ("/actions", "Context-aware quick actions"),
+            ],
+        ),
+        (
+            "⚙️ Backends & Models",
+            [
+                ("/backend", "Show/switch backend with buttons (sdk/desktop/cowork)"),
+                ("/desktop", "Claude Desktop config status (MCP + dev-mode env)"),
+                ("/cowork", "Claude Cowork profile status"),
+                ("/model [name|reset]", "Show/set per-chat model override"),
+                ("/permission [mode|reset]", "Show/set permission mode"),
+                ("/mcp", "List MCP servers from all sources"),
+            ],
+        ),
+        (
+            "🧩 Capabilities",
+            [
+                ("/skills [keyword]", "List skills (paginated, filterable)"),
+                ("/plugins", "List installed Claude plugins"),
+                ("/features", "Show enabled feature toggles"),
+                ("/verbose 0|1|2", "Set output verbosity"),
+            ],
+        ),
+        (
+            "📊 Insights & Jobs",
+            [
+                ("/stop", "Interrupt the running request"),
+                ("/cost", "Show real spend and budget"),
+                ("/stats", "Show usage dashboard"),
+                ("/jobs", "Manage scheduled jobs (/jobs add/remove)"),
+            ],
+        ),
+        (
+            "🎯 Goals & Workflow",
+            [
+                ("/goal [text|off]", "Set a session goal that prefixes every prompt"),
+                ("/loop [N|off]", "Auto-continue the session N times"),
+                ("/todo [add|done|clear]", "Per-session todo list"),
+                ("/plan [off]", "Toggle plan permission mode"),
+                ("/review", "Ask Claude to review the current git diff"),
+            ],
+        ),
+        (
+            "🔧 System",
+            [
+                ("/compact", "Summarize conversation + continue fresh"),
+                ("/clear", "Clear session context"),
+                ("/config", "Show effective configuration"),
+                ("/hooks", "List hooks from Claude Code settings"),
+                ("/memory", "Show Claude memory (CLAUDE.md)"),
+            ],
+        ),
+    ]
+
+    lines = ["🤖 <b>Claude Code Telegram Bot — Help</b>", ""]
+    for title, cmds in groups:
+        cmds = [c for c in cmds if c[0].split()[0] not in agentic_only or agentic]
+        if not cmds:
+            continue
+        lines.append(f"<b>{title}</b>")
+        lines.extend(f"• <code>{cmd}</code> — {desc}" for cmd, desc in cmds)
+        lines.append("")
+    lines += [
+        "💡 <b>Tips</b>",
+        "• Big lists (<code>/skills</code>, <code>/plugins</code>) are paginated — use the ◀️ ▶️ buttons",
+        "• <code>/skills &lt;keyword&gt;</code> filters skills instantly",
+        "• Send files, photos, or voice notes for Claude to review",
+        "• All file access is confined to your approved directory",
+    ]
+
+    await update.message.reply_text("\n".join(lines), parse_mode="HTML")
 
 
 async def sync_threads(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -843,6 +911,7 @@ async def show_projects(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                 ),
             ]
         )
+        keyboard.append([InlineKeyboardButton("❌ Cancel", callback_data="cancel:cd")])
 
         reply_markup = InlineKeyboardMarkup(keyboard)
 
@@ -1126,6 +1195,9 @@ async def quick_actions(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
         # Create inline keyboard
         keyboard = quick_action_manager.create_inline_keyboard(actions, max_columns=2)
+        keyboard.inline_keyboard.append(
+            [InlineKeyboardButton("❌ Cancel", callback_data="cancel:actions")]
+        )
 
         relative_path = current_dir.relative_to(settings.approved_directory)
         await update.message.reply_text(
@@ -1232,11 +1304,123 @@ async def git_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         logger.error("Error in git_command", error=str(e), user_id=user_id)
 
 
+def _resolve_restart_interpreter() -> str:
+    """Return the Python interpreter to use for the replacement process.
+
+    The bot can be launched through a shim (e.g. ``uv run`` or a uv-managed
+    base interpreter) whose ``sys.executable``/``sys.orig_argv[0]`` does not
+    carry the project's installed packages (structlog etc.).  The replacement
+    must therefore use the venv interpreter that actually has the project
+    dependencies, otherwise it dies at import time with ModuleNotFoundError.
+
+    Candidates, in order:
+      1. ``sys.prefix`` (the venv we are running in, when it is a venv)
+      2. the project-local ``.venv`` (uv / poetry convention)
+      3. ``sys.executable`` as a last resort (unchanged behavior)
+    """
+    candidates = []
+    for base in (Path(sys.prefix), Path(__file__).resolve().parents[3] / ".venv"):
+        for rel in ("Scripts/python.exe", "bin/python"):
+            candidate = base / rel
+            if candidate.exists():
+                candidates.append(candidate)
+
+    current = Path(sys.executable).resolve()
+    for candidate in candidates:
+        try:
+            if candidate.resolve() != current:
+                return str(candidate)
+        except OSError:  # pragma: no cover - defensive
+            continue
+    return sys.executable
+
+
+def _build_restart_command() -> list:
+    """Reconstruct the current process command line for a restart.
+
+    Uses ``sys.orig_argv`` (Python 3.10+) so the replacement process is
+    spawned exactly the way this one was (module, script, or console
+    script), except the interpreter is replaced with the venv interpreter
+    that has the project dependencies.  A ``--delay-start`` flag is appended
+    when missing so the new process waits for the old one to release
+    Telegram polling.
+    """
+    cmd = list(sys.orig_argv)
+    if cmd:
+        cmd[0] = _resolve_restart_interpreter()
+    if "--delay-start" not in cmd:
+        cmd += ["--delay-start", "4"]
+    return cmd
+
+
+def _spawn_restart_process() -> None:
+    """Spawn a detached replacement bot process (Windows-friendly restart).
+
+    The replacement inherits the working directory, appends to the same log
+    files under ``logs/``, and waits ``--delay-start`` seconds before
+    starting so this process can shut down cleanly.  The environment is
+    copied and the venv is re-exposed (VIRTUAL_ENV + PATH) so the child
+    resolves the same interpreter and tools even when launched through a
+    shell shim.
+    """
+    cmd = _build_restart_command()
+    cwd = Path.cwd()
+    log_dir = cwd / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+
+    creationflags = 0
+    if os.name == "nt":
+        creationflags = subprocess.CREATE_NEW_PROCESS_GROUP | getattr(
+            subprocess, "DETACHED_PROCESS", 0x00000008
+        )
+
+    # Re-expose the venv for the child (harmless when cmd[0] is already the
+    # venv interpreter; essential when a shim resolved the base python).
+    env = os.environ.copy()
+    # Fresh config wins: strip Anthropic/Claude env vars inherited from this
+    # process (a previous base URL, ambient API key, model override) so the
+    # replacement loads them from .env instead of inheriting stale values.
+    for _key in (
+        "ANTHROPIC_API_KEY",
+        "ANTHROPIC_AUTH_TOKEN",
+        "ANTHROPIC_BASE_URL",
+        "ANTHROPIC_MODEL",
+        "ANTHROPIC_SMALL_FAST_MODEL",
+        "CLAUDE_MODEL",
+        "CLAUDE_MODELS",
+    ):
+        env.pop(_key, None)
+    venv_dir = Path(sys.prefix)
+    if venv_dir.name == ".venv" and (venv_dir / "Scripts" / "python.exe").exists():
+        env["VIRTUAL_ENV"] = str(venv_dir)
+        scripts = str(venv_dir / "Scripts")
+        env["PATH"] = scripts + os.pathsep + env.get("PATH", "")
+
+    with (
+        open(log_dir / "bot.out.log", "ab") as out_f,
+        open(log_dir / "bot.err.log", "ab") as err_f,
+    ):
+        subprocess.Popen(
+            cmd,
+            cwd=str(cwd),
+            env=env,
+            stdin=subprocess.DEVNULL,
+            stdout=out_f,
+            stderr=err_f,
+            creationflags=creationflags,
+            close_fds=True,
+        )
+    logger.info("Replacement bot process spawned", cmd=cmd)
+
+
 async def restart_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /restart command - gracefully restart the bot process.
 
-    Sends a confirmation message then triggers SIGTERM so systemd
-    (or any process manager with restart-on-exit) brings the bot back up.
+    Sends a confirmation message, then:
+    - On Windows: spawns a detached replacement process (with a startup
+      delay so Telegram polling is released first) and terminates this one.
+    - On POSIX: sends SIGTERM so a process manager with restart-on-exit
+      (e.g. systemd ``Restart=always``) brings the bot back up.
 
     Auth: protected by the auth middleware (group -2) which raises
     ``ApplicationHandlerStop`` for unauthenticated users before any
@@ -1255,9 +1439,16 @@ async def restart_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     logger.info("Restart requested via /restart command", user_id=user_id)
 
-    # SIGTERM triggers the existing graceful-shutdown handler in main.py;
-    # systemd Restart=always will bring the process back up.
-    os.kill(os.getpid(), signal.SIGTERM)
+    if os.name == "nt":
+        # Windows: spawn a replacement, then terminate this process. The
+        # replacement delays startup so there is no polling conflict.
+        _spawn_restart_process()
+        logger.info("Terminating current process for restart", pid=os.getpid())
+        os.kill(os.getpid(), signal.SIGTERM)
+    else:
+        # SIGTERM triggers the existing graceful-shutdown handler in main.py;
+        # systemd Restart=always will bring the process back up.
+        os.kill(os.getpid(), signal.SIGTERM)
 
 
 def _format_file_size(size: int) -> str:
@@ -1275,3 +1466,263 @@ def _escape_markdown(text: str) -> str:
     Legacy name kept for compatibility with callers; actually escapes HTML.
     """
     return escape_html(text)
+
+
+# ---------------------------------------------------------------------------
+# Backend / desktop / cowork / model / permission / mcp commands (classic)
+# ---------------------------------------------------------------------------
+
+_BACKEND_CHOICES = ("sdk", "desktop", "cowork")
+_PERMISSION_CHOICES = (
+    "acceptEdits",
+    "plan",
+    "bypassPermissions",
+    "dontAsk",
+    "manual",
+)
+
+
+def _claude_integration(context: ContextTypes.DEFAULT_TYPE):
+    """Resolve the ClaudeIntegration facade from bot_data."""
+    return context.bot_data.get("claude_integration")
+
+
+async def backend_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Show/set backend: /backend [sdk|desktop|cowork]."""
+    integration = _claude_integration(context)
+    if not integration:
+        await update.message.reply_text("Claude integration not available.")
+        return
+
+    args = update.message.text.split()[1:] if update.message.text else []
+    if not args:
+        current = context.user_data.get("backend") or (integration.router.select().name)
+        keyboard = [
+            [
+                InlineKeyboardButton(
+                    ("✅ " if name == current else "")
+                    + integration.backend_display(name),
+                    callback_data=f"backend:set:{name}",
+                )
+            ]
+            for name in integration.router.available_backends()
+        ]
+        keyboard.append(
+            [InlineKeyboardButton("❌ Cancel", callback_data="cancel:backend")]
+        )
+        await update.message.reply_text(
+            f"🧠 Backend: <b>{integration.backend_display(current)}</b>\n\n"
+            "Tap a button to switch (session resets):",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+        )
+        return
+
+    name = args[0].strip().lower()
+    if name not in integration.router.available_backends():
+        await update.message.reply_text(
+            f"❌ Unknown backend <code>{name}</code>. Available: "
+            + ", ".join(integration.router.available_backends()),
+            parse_mode="HTML",
+        )
+        return
+
+    context.user_data["backend"] = name
+    context.user_data["claude_session_id"] = None
+    context.user_data["force_new_session"] = True
+    await update.message.reply_text(
+        f"🧠 Backend switched to <b>{integration.backend_display(name)}</b>.\n"
+        "Session reset — your next message starts fresh.",
+        parse_mode="HTML",
+    )
+
+
+async def _status_reply(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    backend_name: str,
+    header: str,
+) -> None:
+    """Shared status formatting for /desktop and /cowork."""
+    integration = _claude_integration(context)
+    if not integration:
+        await update.message.reply_text("Claude integration not available.")
+        return
+    statuses = await integration.get_backend_status()
+    status = statuses.get("backends", {}).get(backend_name, {})
+    active_here = context.user_data.get("backend") or statuses.get("active_default")
+
+    lines = [header]
+    if not status:
+        lines.append("Backend not registered.")
+        await update.message.reply_text("\n".join(lines), parse_mode="HTML")
+        return
+
+    ok = status.get("ok")
+    lines.append("Status: " + ("✅ configured" if ok else "⚠️ not configured"))
+    lines.append(
+        "Active here: "
+        + ("✅" if active_here == backend_name else "—")
+        + f" <code>{backend_name}</code>"
+    )
+
+    if backend_name == "desktop":
+        path = status.get("config_path")
+        lines.append(f"Config: <code>{path}</code>" if path else "Config: —")
+        servers = status.get("mcp_servers") or []
+        lines.append(
+            "MCP servers: " + (", ".join(f"<code>{s}</code>" for s in servers) or "—")
+        )
+        gateway = status.get("gateway_base_url")
+        lines.append(
+            "Gateway: " + (f"<code>{gateway}</code>" if gateway else "default")
+        )
+        lines.append(
+            "Dev-mode env: " + ("✅" if status.get("developer_mode_env") else "—")
+        )
+    elif backend_name == "cowork":
+        lines.append(f"Model: <code>{status.get('model')}</code>")
+        lines.append(f"Permission: <code>{status.get('permission_mode')}</code>")
+        lines.append(f"Web search: {'✅' if status.get('web_search') else '—'}")
+        plugins = status.get("plugin_dirs") or []
+        lines.append(
+            "Plugins: " + (", ".join(f"<code>{p}</code>" for p in plugins) or "—")
+        )
+        prefs = status.get("preferences_loaded")
+        lines.append(f"Preferences loaded: {'✅' if prefs else '—'}")
+
+    await update.message.reply_text("\n".join(lines), parse_mode="HTML")
+
+
+async def desktop_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Claude Desktop config status: /desktop."""
+    await _status_reply(
+        update,
+        context,
+        "desktop",
+        "🖥️ <b>Claude Desktop</b> (developer-mode mirror)",
+    )
+
+
+async def cowork_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Claude Cowork profile status: /cowork."""
+    await _status_reply(
+        update,
+        context,
+        "cowork",
+        "🤝 <b>Claude Cowork</b> profile",
+    )
+
+
+async def model_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Show/set per-chat model override: /model [name|reset]."""
+    args = update.message.text.split()[1:] if update.message.text else []
+    if not args:
+        current = context.user_data.get("model_override")
+        settings: Settings = context.bot_data["settings"]
+        known = settings.claude_models or []
+        lines = [
+            "🧠 Model override: "
+            + (f"<code>{current}</code>" if current else "none (default)")
+        ]
+        if known:
+            lines.append("\nAvailable models:")
+            lines.append("\n".join(f"• <code>{m}</code>" for m in known))
+        lines.append(
+            "\nUsage: <code>/model &lt;name&gt;</code> · "
+            "<code>/model reset</code> to clear"
+        )
+        await update.message.reply_text("\n".join(lines), parse_mode="HTML")
+        return
+    if args[0].strip().lower() in ("reset", "none", "-", "default"):
+        context.user_data.pop("model_override", None)
+        await update.message.reply_text(
+            "Model override cleared — using the default model."
+        )
+        return
+    context.user_data["model_override"] = args[0].strip()
+    await update.message.reply_text(
+        f"Model override set to <b>{args[0].strip()}</b>", parse_mode="HTML"
+    )
+
+
+async def permission_command(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """Show/set permission mode: /permission [mode|reset]."""
+    args = update.message.text.split()[1:] if update.message.text else []
+    if not args:
+        current = context.user_data.get("permission_mode")
+        await update.message.reply_text(
+            "🔐 Permission mode: "
+            + (f"<code>{current}</code>" if current else "default")
+            + "\n\nModes: "
+            + ", ".join(f"<code>{m}</code>" for m in _PERMISSION_CHOICES)
+            + "\n<code>/permission reset</code> to clear",
+            parse_mode="HTML",
+        )
+        return
+    value = args[0].strip().lower()
+    if value in ("reset", "none", "-", "default"):
+        context.user_data.pop("permission_mode", None)
+        await update.message.reply_text(
+            "Permission mode cleared — using the backend default."
+        )
+        return
+    canonical = {mode.lower(): mode for mode in _PERMISSION_CHOICES}
+    mode = canonical.get(value)
+    if mode is None:
+        await update.message.reply_text(
+            f"❌ Unknown mode <code>{args[0].strip()}</code>. Valid: "
+            + ", ".join(_PERMISSION_CHOICES),
+            parse_mode="HTML",
+        )
+        return
+    context.user_data["permission_mode"] = mode
+    await update.message.reply_text(
+        f"Permission mode set to <b>{mode}</b>", parse_mode="HTML"
+    )
+
+
+async def mcp_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """List MCP servers active for the current backend: /mcp."""
+    integration = _claude_integration(context)
+    if not integration:
+        await update.message.reply_text("Claude integration not available.")
+        return
+    settings: Settings = context.bot_data["settings"]
+    active_name = context.user_data.get("backend") or (integration.router.select().name)
+    backend = integration.backends.get(active_name)
+    servers = []
+    try:
+        if backend is not None and hasattr(backend, "mcp_servers"):
+            servers = sorted(backend.mcp_servers().keys())
+        elif settings.enable_mcp and settings.mcp_config_path:
+            import json as _json
+
+            try:
+                with open(settings.mcp_config_path) as f:
+                    servers = sorted((_json.load(f).get("mcpServers") or {}).keys())
+            except (OSError, ValueError):
+                servers = []
+    except Exception:  # pragma: no cover - defensive
+        servers = []
+
+    lines = [f"🔌 MCP servers for <b>{integration.backend_display(active_name)}</b>:"]
+    if servers:
+        lines.append("\n".join(f"• <code>{s}</code>" for s in servers))
+    else:
+        lines.append("None configured.")
+    from .capabilities import collect_mcp_servers
+
+    extra = collect_mcp_servers(settings)
+    if extra:
+        for label, extra_servers in extra:
+            lines.append(f"\n🧩 <b>{escape_html(label)}</b>:")
+            lines.append("\n".join(f"• <code>{s}</code>" for s in extra_servers))
+    else:
+        lines.append(
+            "\n💡 No MCP servers found. Set <code>CLAUDE_CONFIG_DIR</code> "
+            "or <code>ENABLE_MCP=true</code> + <code>MCP_CONFIG_PATH</code>."
+        )
+    await update.message.reply_text("\n".join(lines), parse_mode="HTML")

@@ -238,6 +238,86 @@ def _make_can_use_tool_callback(
     return can_use_tool
 
 
+# Tools that require explicit human approval when remote approvals are enabled.
+# Read-only / query tools stay auto-allowed so the agent can work fluidly.
+_REMOTE_APPROVAL_TOOLS = frozenset(
+    {
+        "Bash",
+        "Write",
+        "Edit",
+        "MultiEdit",
+        "NotebookEdit",
+        "WebFetch",
+        "WebSearch",
+        "Task",
+        "Skill",
+        "Agent",
+        "ComputerUse",
+    }
+)
+
+
+def _make_remote_approval_callback(
+    security_validator: Optional[SecurityValidator],
+    working_directory: Path,
+    approved_directory: Path,
+    approval_bridge: Any,
+    ask_tools: frozenset = _REMOTE_APPROVAL_TOOLS,
+) -> Any:
+    """Create a can_use_tool callback that routes permission requests to Telegram.
+
+    Security validation (path/boundary checks) always runs first; anything that
+    fails validation is denied without asking.  Tools in ``ask_tools`` that pass
+    validation are sent to the approval bridge (inline Approve/Deny buttons);
+    everything else is auto-allowed.
+    """
+    base_callback = (
+        _make_can_use_tool_callback(
+            security_validator=security_validator,
+            working_directory=working_directory,
+            approved_directory=approved_directory,
+        )
+        if security_validator
+        else None
+    )
+
+    async def can_use_tool(
+        tool_name: str,
+        tool_input: Dict[str, Any],
+        context: ToolPermissionContext,
+    ) -> Any:
+        # Preventive security validation first.
+        if base_callback is not None:
+            result = await base_callback(tool_name, tool_input, context)
+            if isinstance(result, PermissionResultDeny):
+                return result
+
+        if tool_name in ask_tools:
+            try:
+                decision = await approval_bridge.ask(
+                    tool_name=tool_name,
+                    tool_input=tool_input,
+                    context=context,
+                )
+                return decision
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "Remote approval timed out, denying tool", tool_name=tool_name
+                )
+                return PermissionResultDeny(message="Approval timed out")
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.error(
+                    "Remote approval failed, denying tool",
+                    tool_name=tool_name,
+                    error=str(exc),
+                )
+                return PermissionResultDeny(message="Approval unavailable")
+
+        return PermissionResultAllow()
+
+    return can_use_tool
+
+
 class ClaudeSDKManager:
     """Manage Claude Code SDK integration."""
 
@@ -258,6 +338,16 @@ class ClaudeSDKManager:
         else:
             logger.info("No API key provided, using existing Claude CLI authentication")
 
+        # Custom Anthropic-compatible endpoint (proxy/gateway). Exporting it to
+        # the environment makes the spawned Claude CLI target this endpoint
+        # instead of api.anthropic.com.
+        if config.anthropic_base_url:
+            os.environ["ANTHROPIC_BASE_URL"] = config.anthropic_base_url
+            logger.info(
+                "Using custom Anthropic base URL",
+                base_url=config.anthropic_base_url,
+            )
+
     def _is_retryable_error(self, exc: BaseException) -> bool:
         """Return True for transient errors that warrant a retry.
         asyncio.TimeoutError is intentional (user-configured timeout) — not retried.
@@ -277,8 +367,31 @@ class ClaudeSDKManager:
         stream_callback: Optional[Callable[[StreamUpdate], None]] = None,
         interrupt_event: Optional[asyncio.Event] = None,
         images: Optional[List[Dict[str, str]]] = None,
+        model: Optional[str] = None,
+        permission_mode: Optional[str] = None,
+        mcp_servers: Optional[Dict[str, Any]] = None,
+        env_overrides: Optional[Dict[str, str]] = None,
+        system_prompt_extra: Optional[str] = None,
+        plugins: Optional[List[Dict[str, str]]] = None,
+        approval_bridge: Optional[Any] = None,
+        allowed_tools_extra: Optional[List[str]] = None,
     ) -> ClaudeResponse:
-        """Execute Claude Code command via SDK."""
+        """Execute Claude Code command via SDK.
+
+        Extra keyword arguments (used by the desktop/cowork backends):
+          - ``model``: override the configured Claude model for this run.
+          - ``permission_mode``: override the SDK permission mode.
+          - ``mcp_servers``: dict of MCP server configs (overrides the generic
+            mcp_config_path loading).
+          - ``env_overrides``: env vars applied to the CLI process (e.g. a
+            desktop-config gateway base URL).
+          - ``system_prompt_extra``: appended to the base system prompt.
+          - ``plugins``: list of {"path": ...} local plugins to load.
+          - ``approval_bridge``: routes tool permission requests to Telegram
+            buttons when remote approvals are enabled.
+          - ``allowed_tools_extra``: extra tool names appended to
+            claude_allowed_tools (used to opt tools like WebSearch in).
+        """
         start_time = asyncio.get_event_loop().time()
 
         logger.info(
@@ -309,6 +422,9 @@ class ClaudeSDKManager:
                     path=str(claude_md_path),
                 )
 
+            if system_prompt_extra:
+                base_prompt = f"{base_prompt}\n\n{system_prompt_extra}"
+
             # When DISABLE_TOOL_VALIDATION=true, pass None for allowed/disallowed
             # tools so the SDK does not restrict tool usage (e.g. MCP tools).
             if self.config.disable_tool_validation:
@@ -321,7 +437,7 @@ class ClaudeSDKManager:
             # Build Claude Agent options
             options = ClaudeAgentOptions(
                 max_turns=self.config.claude_max_turns,
-                model=self.config.claude_model or None,
+                model=model or self.config.claude_model or None,
                 max_budget_usd=self.config.claude_max_cost_per_request,
                 cwd=str(working_directory),
                 allowed_tools=sdk_allowed_tools,
@@ -338,16 +454,51 @@ class ClaudeSDKManager:
                 stderr=_stderr_callback,
             )
 
-            # Pass MCP server configuration if enabled
-            if self.config.enable_mcp and self.config.mcp_config_path:
+            # Explicit MCP server config (desktop/cowork backends) wins over the
+            # generic mcp_config_path loading.
+            if mcp_servers is not None:
+                options.mcp_servers = mcp_servers
+                logger.info("MCP servers provided by backend", count=len(mcp_servers))
+            elif self.config.enable_mcp and self.config.mcp_config_path:
                 options.mcp_servers = self._load_mcp_config(self.config.mcp_config_path)
                 logger.info(
                     "MCP servers configured",
                     mcp_config_path=str(self.config.mcp_config_path),
                 )
 
-            # Wire can_use_tool callback for preventive tool validation
-            if self.security_validator:
+            # Env overrides (e.g. desktop-config gateway base URL / API key).
+            if env_overrides:
+                options.env = {**options.env, **env_overrides}
+                logger.info("Env overrides applied", keys=sorted(env_overrides))
+
+            # Local plugins (cowork plugin dirs).
+            if plugins:
+                options.plugins = [
+                    {"type": "local", "path": str(p["path"])} for p in plugins
+                ]
+                logger.info("Plugins loaded", count=len(plugins))
+
+            # Extra allowed tools (e.g. WebSearch for cowork).
+            if allowed_tools_extra and sdk_allowed_tools is not None:
+                options.allowed_tools = list(
+                    dict.fromkeys([*sdk_allowed_tools, *allowed_tools_extra])
+                )
+
+            # Permission mode override (e.g. acceptEdits for cowork).
+            if permission_mode:
+                options.permission_mode = permission_mode
+
+            # Wire can_use_tool callback: remote approvals (Telegram buttons)
+            # take precedence, then preventive security validation.
+            if approval_bridge is not None and self.config.enable_remote_approvals:
+                options.can_use_tool = _make_remote_approval_callback(
+                    security_validator=self.security_validator,
+                    working_directory=working_directory,
+                    approved_directory=self.config.approved_directory,
+                    approval_bridge=approval_bridge,
+                )
+                logger.info("Remote approval callback wired")
+            elif self.security_validator:
                 options.can_use_tool = _make_can_use_tool_callback(
                     security_validator=self.security_validator,
                     working_directory=working_directory,
@@ -753,13 +904,19 @@ class ClaudeSDKManager:
         """Load MCP server configuration from a JSON file.
 
         The new claude-agent-sdk expects mcp_servers as a dict, not a file path.
+        Entries with "enabled": false are filtered out (see /mcp disable).
         """
         import json
 
         try:
             with open(config_path) as f:
                 config_data = json.load(f)
-            return config_data.get("mcpServers", {})
+            servers = config_data.get("mcpServers", {})
+            return {
+                name: entry
+                for name, entry in servers.items()
+                if entry.get("enabled", True) is not False
+            }
         except (json.JSONDecodeError, OSError) as e:
             logger.error(
                 "Failed to load MCP config", path=str(config_path), error=str(e)

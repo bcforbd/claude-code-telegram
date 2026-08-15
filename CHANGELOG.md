@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Insight & control commands**: `/stop` (interrupt the running request, agentic + classic), `/cost` (real SDK spend + budget), `/stats` (usage dashboard), `/sessions` (list + inline switch/resume), `/context` (session inspector), `/jobs` (scheduled-job management: list / add / remove), `/doctor` (self-diagnostics checklist). Single shared implementation in `src/bot/handlers/insights.py` (no agentic/classic duplication)
+- **Backend modes (sdk / desktop / cowork)**: the bot now drives the Claude engine the way Claude Code, Claude Desktop (imports `claude_desktop_config.json` MCP servers + dev-mode env), or Claude Cowork (account conversation preferences, `auto/claude-opus` model, `acceptEdits`, web search, plugins) configure it. New `src/claude/backend.py` router + `desktop_integration.py` + `cowork_integration.py`; selectable globally (`CLAUDE_BACKEND`) or per chat (`/backend`)
+- **Remote approvals**: `ENABLE_REMOTE_APPROVALS=true` routes SDK tool permission requests to Telegram inline Approve / Deny / Always-allow buttons (`src/bot/features/approvals.py` + `src/bot/handlers/approval.py`); timeout defaults to deny (`APPROVAL_TIMEOUT_SECONDS`)
+- **New commands**: `/backend`, `/desktop`, `/cowork`, `/model`, `/permission`, `/mcp` (agentic + classic modes)
+- **New MCP tools**: `send_document_to_user(file_path, caption)` and `notify_user(message)` alongside `send_image_to_user`
+- **New settings**: `CLAUDE_BACKEND`, `DESKTOP_CONFIG_PATH`, `COWORK_SETTINGS_PATH`, `COWORK_MODEL`, `COWORK_PERMISSION_MODE`, `COWORK_ENABLE_WEB_SEARCH`, `COWORK_PLUGIN_DIRS`, `DEFAULT_PERMISSION_MODE`, `ENABLE_REMOTE_APPROVALS`, `APPROVAL_TIMEOUT_SECONDS`
+- **Docs**: `docs/backend-modes.md` (full backend + approvals guide), `docs/PLAN-cowork-desktop.md` (research + plan)
+
+### Fixed
+- **Remote approvals deadlock**: `approve:` callbacks now bypass the sequential update lock (alongside `stop:`), so approval buttons can resolve while the request that owns them is still running (previously every approval timed out)
+- **Session export**: `SessionExporter` now uses the real storage API (`get_session_history`) and the callback passes arguments in the correct order — `/export` actually produces files (md/html/json)
+- **Quick actions**: keyboard callback prefix matches the router (`quick:`), the manager is fetched from the feature registry, and the correct `command` field is used — `/actions` works end-to-end
+- **Classic-mode error masking**: `claude_response` is initialized before the run so a failed request can no longer raise a confusing `NameError` on top of the real error
+- **Windows `/restart`**: spawns a detached replacement process with a startup delay (`--delay-start`) instead of relying on systemd; the bot now survives `/restart` on Windows
+
 ## [1.6.0] - 2026-03-30
 
 ### Added

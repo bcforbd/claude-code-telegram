@@ -1,9 +1,11 @@
 """Session export functionality for exporting chat history in various formats."""
 
 import json
+import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import Enum
+from typing import Any, Dict, List
 
 from src.storage.facade import Storage
 from src.utils.constants import MAX_SESSION_LENGTH
@@ -27,6 +29,31 @@ class ExportedSession:
     mime_type: str
     size_bytes: int
     created_at: datetime
+
+
+def _normalize_messages(history: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Normalize stored messages into (role, content, timestamp) dicts.
+
+    Stored ``MessageModel`` dicts use ``prompt`` (user) / ``response``
+    (assistant) / ``timestamp``; the exporter renders them as a flat
+    chronological list with a ``role`` field.
+    """
+    messages: List[Dict[str, Any]] = []
+    for msg in history.get("messages", []) or []:
+        timestamp = msg.get("timestamp") or ""
+        if msg.get("prompt"):
+            messages.append(
+                {"role": "user", "content": msg["prompt"], "created_at": timestamp}
+            )
+        if msg.get("response"):
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": msg["response"],
+                    "created_at": timestamp,
+                }
+            )
+    return messages
 
 
 class SessionExporter:
@@ -59,27 +86,31 @@ class SessionExporter:
         Raises:
             ValueError: If session not found or invalid format
         """
-        # Get session data
-        session = await self.storage.get_session(user_id, session_id)
-        if not session:
-            raise ValueError(f"Session {session_id} not found")
-
-        # Get session messages
-        messages = await self.storage.get_session_messages(
+        # Get session data (session + messages + tool usage)
+        history = await self.storage.get_session_history(
             session_id, limit=MAX_SESSION_LENGTH
         )
+        if not history or not history.get("session"):
+            raise ValueError(f"Session {session_id} not found")
+
+        session: Dict[str, Any] = history["session"]
+        # Enforce ownership: only the session owner may export it
+        if session.get("user_id") not in (None, user_id):
+            raise ValueError("Session not found")
+
+        messages = _normalize_messages(history)
 
         # Export based on format
         if format == ExportFormat.MARKDOWN:
-            content = await self._export_markdown(session, messages)
+            content = self._export_markdown(session, messages)
             mime_type = "text/markdown"
             extension = "md"
         elif format == ExportFormat.JSON:
-            content = await self._export_json(session, messages)
+            content = self._export_json(session, messages)
             mime_type = "application/json"
             extension = "json"
         elif format == ExportFormat.HTML:
-            content = await self._export_html(session, messages)
+            content = self._export_html(session, messages)
             mime_type = "text/html"
             extension = "html"
         else:
@@ -87,7 +118,8 @@ class SessionExporter:
 
         # Create filename
         timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
-        filename = f"session_{session_id[:8]}_{timestamp}.{extension}"
+        session_id_str = str(session.get("session_id") or session_id)
+        filename = f"session_{session_id_str[:8]}_{timestamp}.{extension}"
 
         return ExportedSession(
             format=format,
@@ -98,12 +130,21 @@ class SessionExporter:
             created_at=datetime.now(UTC),
         )
 
-    async def _export_markdown(self, session: dict, messages: list) -> str:
+    def _session_id(self, session: Dict[str, Any]) -> str:
+        return str(session.get("session_id") or "")
+
+    def _session_created(self, session: Dict[str, Any]) -> str:
+        return str(session.get("created_at") or "")
+
+    def _session_updated(self, session: Dict[str, Any]) -> str:
+        return str(session.get("last_used") or session.get("updated_at") or "")
+
+    def _export_markdown(self, session: dict, messages: list) -> str:
         """Export session as Markdown.
 
         Args:
             session: Session metadata
-            messages: List of messages
+            messages: List of normalized messages
 
         Returns:
             Markdown formatted content
@@ -112,16 +153,16 @@ class SessionExporter:
 
         # Header
         lines.append("# Claude Code Session Export")
-        lines.append(f"\n**Session ID:** `{session['id']}`")
-        lines.append(f"**Created:** {session['created_at']}")
-        if session.get("updated_at"):
-            lines.append(f"**Last Updated:** {session['updated_at']}")
+        lines.append(f"\n**Session ID:** `{self._session_id(session)}`")
+        lines.append(f"**Created:** {self._session_created(session)}")
+        if self._session_updated(session):
+            lines.append(f"**Last Updated:** {self._session_updated(session)}")
         lines.append(f"**Message Count:** {len(messages)}")
         lines.append("\n---\n")
 
         # Messages
         for msg in messages:
-            timestamp = msg["created_at"]
+            timestamp = msg.get("created_at") or ""
             role = "You" if msg["role"] == "user" else "Claude"
             content = msg["content"]
 
@@ -131,34 +172,32 @@ class SessionExporter:
 
         return "\n".join(lines)
 
-    async def _export_json(self, session: dict, messages: list) -> str:
+    def _export_json(self, session: dict, messages: list) -> str:
         """Export session as JSON.
 
         Args:
             session: Session metadata
-            messages: List of messages
+            messages: List of normalized messages
 
         Returns:
             JSON formatted content
         """
         export_data = {
             "session": {
-                "id": session["id"],
-                "user_id": session["user_id"],
-                "created_at": session["created_at"].isoformat(),
-                "updated_at": (
-                    session.get("updated_at", "").isoformat()
-                    if session.get("updated_at")
-                    else None
-                ),
-                "message_count": len(messages),
+                "id": self._session_id(session),
+                "user_id": session.get("user_id"),
+                "project_path": session.get("project_path"),
+                "created_at": self._session_created(session),
+                "last_used": self._session_updated(session),
+                "total_cost": session.get("total_cost", 0.0),
+                "total_turns": session.get("total_turns", 0),
+                "message_count": session.get("message_count", 0),
             },
             "messages": [
                 {
-                    "id": msg["id"],
                     "role": msg["role"],
                     "content": msg["content"],
-                    "created_at": msg["created_at"].isoformat(),
+                    "created_at": msg.get("created_at"),
                 }
                 for msg in messages
             ],
@@ -166,27 +205,26 @@ class SessionExporter:
 
         return json.dumps(export_data, indent=2, ensure_ascii=False)
 
-    async def _export_html(self, session: dict, messages: list) -> str:
+    def _export_html(self, session: dict, messages: list) -> str:
         """Export session as HTML.
 
         Args:
             session: Session metadata
-            messages: List of messages
+            messages: List of normalized messages
 
         Returns:
             HTML formatted content
         """
         # Convert markdown content to HTML-safe format
-        markdown_content = await self._export_markdown(session, messages)
+        markdown_content = self._export_markdown(session, messages)
         html_content = self._markdown_to_html(markdown_content)
-
         # HTML template
         template = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Claude Code Session - {session['id'][:8]}</title>
+    <title>Claude Code Session - {self._session_id(session)[:8]}</title>
     <style>
         body {{
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -278,8 +316,6 @@ class SessionExporter:
         html = html.replace("### ", "<h3>").replace("\n", "</h3>\n", 3)
 
         # Bold
-        import re
-
         html = re.sub(r"\*\*([^*]+)\*\*", r"<strong>\1</strong>", html)
 
         # Code blocks

@@ -5,6 +5,7 @@ import asyncio
 import logging
 import signal
 import sys
+import time
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -89,6 +90,16 @@ def parse_args() -> argparse.Namespace:
 
     parser.add_argument("--config-file", type=Path, help="Path to configuration file")
 
+    parser.add_argument(
+        "--delay-start",
+        type=int,
+        default=0,
+        help=(
+            "Delay bot startup by N seconds (used by /restart so the new "
+            "process waits for the old one to release Telegram polling)"
+        ),
+    )
+
     return parser.parse_args()
 
 
@@ -144,10 +155,31 @@ async def create_application(config: Settings) -> Dict[str, Any]:
     logger.info("Using Claude Python SDK integration")
     sdk_manager = ClaudeSDKManager(config, security_validator=security_validator)
 
+    # Build the backend set (sdk / desktop / cowork) + router so the bot can
+    # drive the Claude engine the way Claude Code, Claude Desktop, or Claude
+    # Cowork configure it.
+    from src.claude.backend import BackendRouter, ClaudeBackend, SdkBackend
+    from src.claude.cowork_integration import CoworkManager
+    from src.claude.desktop_integration import ClaudeDesktopManager
+
+    backends: Dict[str, ClaudeBackend] = {
+        "sdk": SdkBackend(config, sdk_manager),
+        "desktop": ClaudeDesktopManager(config, sdk_manager),
+        "cowork": CoworkManager(config, sdk_manager),
+    }
+    backend_router = BackendRouter(config, backends)
+    logger.info(
+        "Claude backends registered",
+        backends=list(backends),
+        default=config.claude_backend,
+    )
+
     claude_integration = ClaudeIntegration(
         config=config,
         sdk_manager=sdk_manager,
         session_manager=session_manager,
+        backends=backends,
+        router=backend_router,
     )
 
     # --- Event bus and agentic platform components ---
@@ -181,6 +213,8 @@ async def create_application(config: Settings) -> Dict[str, Any]:
         "event_bus": event_bus,
         "project_registry": None,
         "project_threads_manager": None,
+        # Wired with the real Telegram bot instance in run_application()
+        "approval_bridge": None,
     }
 
     bot = ClaudeCodeBot(config, dependencies)
@@ -277,6 +311,20 @@ async def run_application(app: Dict[str, Any]) -> None:
         # Now wire up components that need the Telegram Bot instance
         telegram_bot = bot.app.bot
 
+        # Remote approval bridge: routes tool permission requests to Telegram
+        if config.enable_remote_approvals:
+            from src.bot.features.approvals import ApprovalBridge
+
+            approval_bridge = ApprovalBridge(
+                bot=telegram_bot,
+                timeout_seconds=config.approval_timeout_seconds,
+            )
+            bot.deps["approval_bridge"] = approval_bridge
+            logger.info(
+                "Remote approvals enabled",
+                timeout_seconds=config.approval_timeout_seconds,
+            )
+
         # Start event bus
         await event_bus.start()
 
@@ -314,6 +362,7 @@ async def run_application(app: Dict[str, Any]) -> None:
                 default_working_directory=config.approved_directory,
             )
             await scheduler.start()
+            bot.deps["scheduler"] = scheduler
             logger.info("Job scheduler enabled")
 
         # Shutdown task
@@ -369,6 +418,12 @@ async def run_application(app: Dict[str, Any]) -> None:
 async def main() -> None:
     """Main application entry point."""
     args = parse_args()
+
+    # /restart spawns a replacement process with --delay-start so the old
+    # process can shut down and release the Telegram polling lock first.
+    if args.delay_start > 0:
+        time.sleep(args.delay_start)
+
     setup_logging(debug=args.debug)
 
     logger = structlog.get_logger()

@@ -12,6 +12,7 @@ from ...config.settings import Settings
 from ...security.audit import AuditLogger
 from ...security.validators import SecurityValidator
 from ..utils.html_format import escape_html
+from .insights import handle_sessions_callback
 
 logger = structlog.get_logger()
 
@@ -66,6 +67,7 @@ async def handle_callback_query(
             "conversation": handle_conversation_callback,
             "git": handle_git_callback,
             "export": handle_export_callback,
+            "sess": handle_sessions_callback,
         }
 
         handler = handlers.get(action)
@@ -873,8 +875,9 @@ async def handle_quick_action_callback(
     """Handle quick action callbacks."""
     user_id = query.from_user.id
 
-    # Get quick actions manager from bot data if available
-    quick_actions = context.bot_data.get("quick_actions")
+    # Get quick actions manager from the features registry
+    features = context.bot_data.get("features")
+    quick_actions = features.get_quick_actions() if features else None
 
     if not quick_actions:
         await query.edit_message_text(
@@ -920,7 +923,7 @@ async def handle_quick_action_callback(
 
         # Run the action through Claude
         claude_response = await claude_integration.run_command(
-            prompt=action.prompt, working_directory=current_dir, user_id=user_id
+            prompt=action.command, working_directory=current_dir, user_id=user_id
         )
 
         if claude_response:
@@ -1259,8 +1262,20 @@ async def handle_export_callback(
         )
 
         # Export session
+        from ...features.session_export import ExportFormat
+
+        try:
+            export_fmt = ExportFormat(export_format)
+        except ValueError:
+            await query.edit_message_text(
+                f"? <b>Unknown Format</b>\n\n"
+                f"{escape_html(export_format)} is not a supported export format.",
+                parse_mode="HTML",
+            )
+            return
+
         exported_session = await session_exporter.export_session(
-            claude_session_id, export_format
+            user_id, claude_session_id, export_fmt
         )
 
         # Send the exported file
