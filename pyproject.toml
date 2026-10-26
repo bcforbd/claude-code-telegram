@@ -48,13 +48,13 @@ python-dotenv = "^1.0.0"
 aiofiles = "^24.1.0"
 aiosqlite = "^0.21.0"
 anthropic = "^0.40.0"
-claude-agent-sdk = "^0.1.39"
-fastapi = "^0.115.0"
-uvicorn = {version = "^0.34.0", extras = ["standard"]}
-apscheduler = "^3.10"
+claude-agent-sdk = "^0.2.173"
+fastapi = "^0.161.1"
+uvicorn = {version = "^0.54.0", extras = ["standard"]}
+apscheduler = "^3.11"
 PyYAML = "^6.0.2"
-mistralai = {version = "^1.0.0", optional = true}
-openai = {version = "^1.0.0", optional = true}
+mistralai = {version = "^3.3.0", optional = true}
+openai = {version = "^3.37.0", optional = true}
 
 [tool.poetry.extras]
 voice = ["mistralai", "openai"]
